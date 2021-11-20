@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/microcosm-cc/bluemonday"
 
 	log "github.com/go-pkgz/lgr"
@@ -51,8 +50,8 @@ type Telegram struct {
 	}
 }
 
-// telegramMsg is used to send message trough Telegram bot API
-type telegramMsg struct {
+// TelegramMsg is used to send message trough Telegram bot API
+type TelegramMsg struct {
 	Text      string `json:"text"`
 	ParseMode string `json:"parse_mode,omitempty"`
 }
@@ -103,74 +102,19 @@ func NewTelegram(params TelegramParams) (*Telegram, error) {
 	return &res, nil
 }
 
-// Send to telegram recipients
-func (t *Telegram) Send(ctx context.Context, req Request) error {
-	log.Printf("[DEBUG] send telegram notification for comment ID %s", req.Comment.ID)
-	result := new(multierror.Error)
-
-	msg, err := buildMessage(req)
-	if err != nil {
-		return errors.Wrapf(err, "failed to make telegram message body for comment ID %s", req.Comment.ID)
-	}
-
-	if t.AdminChannelID != "" {
-		err := t.sendMessage(ctx, msg, t.AdminChannelID)
-		result = multierror.Append(errors.Wrapf(err,
-			"problem sending admin telegram notification about comment ID %s to %s", req.Comment.ID, t.AdminChannelID),
-		)
-	}
-
-	if t.UserNotifications {
-		for _, user := range req.Telegrams {
-			err := t.sendMessage(ctx, msg, user)
-			result = multierror.Append(errors.Wrapf(err,
-				"problem sending user telegram notification about comment ID %s to %q", req.Comment.ID, user),
-			)
-		}
-	}
-	return result.ErrorOrNil()
-}
-
-func (t *Telegram) sendMessage(ctx context.Context, b []byte, chatID string) error {
+// SendMessage sends provided message to Telegram chat
+func (t *Telegram) SendMessage(ctx context.Context, b []byte, chatID string) error {
 	if _, err := strconv.ParseInt(chatID, 10, 64); err != nil {
 		chatID = "@" + chatID // if chatID not a number enforce @ prefix
 	}
 
-	url := fmt.Sprintf("sendMessage?chat_id=%s&disable_web_page_preview=true", chatID)
+	url := fmt.Sprintf("SendMessage?chat_id=%s&disable_web_page_preview=true", chatID)
 	return t.Request(ctx, url, b, &struct{}{})
 }
 
-// buildMessage generates message for generic notification about new comment
-func buildMessage(req Request) ([]byte, error) {
-	commentURLPrefix := req.Comment.Locator.URL + uiNav
-
-	msg := fmt.Sprintf(`<a href="%s">%s</a>`, commentURLPrefix+req.Comment.ID, escapeTelegramText(req.Comment.User.Name))
-
-	if req.Comment.ParentID != "" {
-		msg += fmt.Sprintf(" -> <a href=\"%s\">%s</a>", commentURLPrefix+req.parent.ID, escapeTelegramText(req.parent.User.Name))
-	}
-
-	msg += fmt.Sprintf("\n\n%s", telegramSupportedHTML(req.Comment.Text))
-
-	if req.Comment.ParentID != "" {
-		msg += fmt.Sprintf("\n\n \"_%s_\"", telegramSupportedHTML(req.parent.Text))
-	}
-
-	if req.Comment.PostTitle != "" {
-		msg += fmt.Sprintf("\n\n↦  <a href=\"%s\">%s</a>", req.Comment.Locator.URL, escapeTelegramText(req.Comment.PostTitle))
-	}
-
-	body := telegramMsg{Text: msg, ParseMode: "HTML"}
-	b, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	return b, nil
-}
-
-// returns HTML with only tags allowed in Telegram HTML message payload
+// TelegramSupportedHTML returns HTML with only tags allowed in Telegram HTML message payload
 // https://core.telegram.org/bots/api#html-style
-func telegramSupportedHTML(htmlText string) string {
+func TelegramSupportedHTML(htmlText string) string {
 	p := bluemonday.NewPolicy()
 	p.AllowElements("b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "a", "code", "pre")
 	p.AllowAttrs("href").OnElements("a")
@@ -178,19 +122,14 @@ func telegramSupportedHTML(htmlText string) string {
 	return p.Sanitize(htmlText)
 }
 
-// returns text sanitized of symbols not allowed inside other HTML tags in Telegram HTML message payload
+// EscapeTelegramText returns text sanitized of symbols not allowed inside other HTML tags in Telegram HTML message payload
 // https://core.telegram.org/bots/api#html-style
-func escapeTelegramText(text string) string {
+func EscapeTelegramText(text string) string {
 	// order is important
 	text = strings.ReplaceAll(text, "&", "&amp;")
 	text = strings.ReplaceAll(text, "<", "&lt;")
 	text = strings.ReplaceAll(text, ">", "&gt;")
 	return text
-}
-
-// SendVerification is not needed for telegram
-func (t *Telegram) SendVerification(_ context.Context, _ VerificationRequest) error {
-	return nil
 }
 
 // TelegramUpdate contains update information, which is used from whole telegram API response
@@ -392,7 +331,7 @@ func (t *Telegram) processUpdates(ctx context.Context, updates *TelegramUpdate) 
 
 // sendText sends a plain text message to telegram peer
 func (t *Telegram) sendText(ctx context.Context, recipientID int, msg string) error {
-	url := fmt.Sprintf("sendMessage?chat_id=%d&text=%s", recipientID, neturl.PathEscape(msg))
+	url := fmt.Sprintf("SendMessage?chat_id=%d&text=%s", recipientID, neturl.PathEscape(msg))
 	return t.Request(ctx, url, nil, &struct{}{})
 }
 
@@ -421,7 +360,7 @@ func (t *Telegram) Request(ctx context.Context, method string, b []byte, data in
 		var req *http.Request
 		var err error
 		if b == nil {
-			req, err = http.NewRequestWithContext(ctx, "GET", url, nil)
+			req, err = http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
 		} else {
 			req, err = http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 			req.Header.Set("Content-Type", "application/json; charset=utf-8")

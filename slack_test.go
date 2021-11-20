@@ -11,8 +11,6 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/umputun/remark42/backend/app/store"
 )
 
 func TestSlack_New(t *testing.T) {
@@ -25,14 +23,17 @@ func TestSlack_New(t *testing.T) {
 	assert.NotNil(t, tb)
 	assert.Equal(t, "C12345678", tb.channelID)
 
+	_, err = ts.newClient("")
+	assert.NoError(t, err)
+	assert.NotNil(t, tb)
+	assert.Equal(t, "general", tb.channelName, "#channel was set to general when not provided")
+
 	_, err = ts.newClient("unknown-channel")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no such channel")
-
 }
 
 func TestSlack_Send(t *testing.T) {
-
 	ts := newMockSlackServer()
 	defer ts.Close()
 
@@ -40,30 +41,15 @@ func TestSlack_Send(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, tb)
 
-	c := store.Comment{Text: "some text", ParentID: "1", ID: "999"}
-	c.User.Name = "from"
-	cp := store.Comment{Text: "some parent text"}
-	cp.User.Name = "to"
-
-	err = tb.Send(context.TODO(), Request{Comment: c, parent: cp})
-	assert.NoError(t, err)
-	c.PostTitle = "test title"
-	err = tb.Send(context.TODO(), Request{Comment: c, parent: cp})
-	assert.NoError(t, err)
-
-	err = tb.Send(context.TODO(), Request{Comment: c, parent: cp})
-	assert.NoError(t, err)
-	c.PostTitle = "[test title]"
-	err = tb.Send(context.TODO(), Request{Comment: c, parent: cp})
+	err = tb.SendWithAttachment(context.TODO(), "", "", "", "")
 	assert.NoError(t, err)
 
 	tb, err = ts.newClient("general")
 	assert.NoError(t, err)
 	ts.isServerDown = true
-	err = tb.Send(context.TODO(), Request{Comment: c, parent: cp})
+	err = tb.SendWithAttachment(context.TODO(), "", "", "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "slack server error", "send on broken client")
-
 }
 
 func TestSlack_Name(t *testing.T) {
@@ -74,18 +60,6 @@ func TestSlack_Name(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, tb)
 	assert.Equal(t, "slack: general (C12345678)", tb.String())
-}
-
-func TestSlack_SendVerification(t *testing.T) {
-	ts := newMockSlackServer()
-	defer ts.Close()
-
-	tb, err := ts.newClient("general")
-	assert.NoError(t, err)
-	assert.NotNil(t, tb)
-
-	err = tb.SendVerification(context.TODO(), VerificationRequest{})
-	assert.NoError(t, err)
 }
 
 type mockSlackServer struct {

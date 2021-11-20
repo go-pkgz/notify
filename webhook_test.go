@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/umputun/remark42/backend/app/store"
 )
 
 type funcWebhookClient func(*http.Request) (*http.Response, error)
@@ -23,7 +21,7 @@ func (c funcWebhookClient) Do(r *http.Request) (*http.Response, error) {
 var okWebhookClient = funcWebhookClient(func(*http.Request) (*http.Response, error) {
 	return &http.Response{
 		StatusCode: http.StatusOK,
-		Body:       ioutil.NopCloser(bytes.NewBufferString("ok")),
+		Body:       io.NopCloser(bytes.NewBufferString("ok")),
 	}, nil
 })
 
@@ -36,7 +34,7 @@ func (errReader) Read(p []byte) (n int, err error) {
 
 func TestWebhook_NewWebhook(t *testing.T) {
 
-	wh, err := NewWebhook(okWebhookClient, WebhookParams{
+	wh, err := NewWebhook(WebhookParams{
 		WebhookURL: "https://example.org/webhook",
 		Headers:    []string{"Authorization:Basic AXVubzpwQDU1dzByYM=="},
 	})
@@ -45,113 +43,81 @@ func TestWebhook_NewWebhook(t *testing.T) {
 
 	assert.Equal(t, "https://example.org/webhook", wh.WebhookURL)
 	assert.Equal(t, []string{"Authorization:Basic AXVubzpwQDU1dzByYM=="}, wh.Headers)
-	assert.Equal(t, `{"text": "{{.Text}}"}`, wh.Template)
 
-	wh, err = NewWebhook(okWebhookClient, WebhookParams{
-		WebhookURL: "https://example.org/webhook",
-		Headers:    []string{"Authorization:Basic AXVubzpwQDU1dzByYM=="},
-		Template:   "{{.Text}}",
-	})
-	assert.NoError(t, err)
-	assert.NotNil(t, wh)
-	assert.Equal(t, "{{.Text}}", wh.Template)
-
-	wh, err = NewWebhook(okWebhookClient, WebhookParams{})
+	wh, err = NewWebhook(WebhookParams{})
 	assert.Nil(t, wh)
 	assert.Error(t, err)
 	assert.Equal(t, "webhook URL is required for webhook notifications", err.Error())
-
-	wh, err = NewWebhook(okWebhookClient, WebhookParams{WebhookURL: "https://example.org/webhook", Template: "{{.Text"})
-	assert.Nil(t, wh)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unable to parse webhook template")
 }
 
 func TestWebhook_Send(t *testing.T) {
-
-	wh, err := NewWebhook(funcWebhookClient(func(r *http.Request) (*http.Response, error) {
+	wh, err := NewWebhook(WebhookParams{
+		WebhookURL: "https://example.org/webhook",
+		Headers:    []string{"Content-Type:application/json,text/plain", ""},
+	})
+	wh.webhookClient = funcWebhookClient(func(r *http.Request) (*http.Response, error) {
 		assert.Len(t, r.Header, 1)
 		assert.Equal(t, r.Header.Get("Content-Type"), "application/json,text/plain")
 
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Body:       ioutil.NopCloser(bytes.NewBufferString("")),
+			Body:       io.NopCloser(bytes.NewBufferString("")),
 		}, nil
-	}), WebhookParams{
-		WebhookURL: "https://example.org/webhook",
-		Headers:    []string{"Content-Type:application/json,text/plain", ""},
 	})
 	assert.NoError(t, err)
 	assert.NotNil(t, wh)
 
-	c := store.Comment{Text: "some text", ParentID: "1", ID: "999"}
-	c.User.Name = "from"
-
-	err = wh.Send(context.TODO(), Request{Comment: c})
+	err = wh.SendWithAttachment(context.TODO(), "some_text")
 	assert.NoError(t, err)
 
-	wh, err = NewWebhook(okWebhookClient, WebhookParams{
-		WebhookURL: "https://example.org/webhook",
-		Template:   "{{.InvalidProperty}}",
-	})
+	wh, err = NewWebhook(WebhookParams{WebhookURL: "https://example.org/webhook"})
+	wh.webhookClient = okWebhookClient
 	assert.NoError(t, err)
-	err = wh.Send(context.TODO(), Request{Comment: c})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "webhook template")
-
-	wh, err = NewWebhook(okWebhookClient, WebhookParams{WebhookURL: "https://example.org/webhook"})
-	assert.NoError(t, err)
-	err = wh.Send(nil, Request{Comment: c}) // nolint
+	err = wh.SendWithAttachment(nil, "some_text") //nolint
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unable to create webhook request")
 
-	wh, err = NewWebhook(funcWebhookClient(func(*http.Request) (*http.Response, error) {
+	wh, err = NewWebhook(WebhookParams{WebhookURL: "https://not-existing-url.net"})
+	wh.webhookClient = funcWebhookClient(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("request failed")
-	}), WebhookParams{WebhookURL: "https://not-existing-url.net"})
+	})
 	assert.NoError(t, err)
-	err = wh.Send(context.TODO(), Request{Comment: c})
+	err = wh.SendWithAttachment(context.TODO(), "some_text")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "webhook request failed")
 
-	wh, err = NewWebhook(funcWebhookClient(func(*http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusNotFound,
-			Body:       ioutil.NopCloser(bytes.NewBufferString("not found")),
-		}, nil
-	}), WebhookParams{
+	wh, err = NewWebhook(WebhookParams{
 		WebhookURL: "http:/example.org/invalid-url",
 	})
+	wh.webhookClient = funcWebhookClient(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusNotFound,
+			Body:       io.NopCloser(bytes.NewBufferString("not found")),
+		}, nil
+	})
 	assert.NoError(t, err)
-	err = wh.Send(context.TODO(), Request{Comment: c})
+	err = wh.SendWithAttachment(context.TODO(), "some_text")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "non-OK status code: 404, body: not found")
 
-	wh, err = NewWebhook(funcWebhookClient(func(*http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusNotFound,
-			Body:       ioutil.NopCloser(errReader{}),
-		}, nil
-	}), WebhookParams{
+	wh, err = NewWebhook(WebhookParams{
 		WebhookURL: "http:/example.org/invalid-url",
 	})
+	wh.webhookClient = funcWebhookClient(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusNotFound,
+			Body:       io.NopCloser(errReader{}),
+		}, nil
+	})
 	assert.NoError(t, err)
-	err = wh.Send(context.TODO(), Request{Comment: c})
+	err = wh.SendWithAttachment(context.TODO(), "some_text")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "non-OK status code: 404")
 	assert.NotContains(t, err.Error(), "body")
 }
 
-func TestWebhook_SendVerification(t *testing.T) {
-	wh, err := NewWebhook(okWebhookClient, WebhookParams{WebhookURL: "https://example.org/webhook"})
-	assert.NoError(t, err)
-	assert.NotNil(t, wh)
-
-	err = wh.SendVerification(context.TODO(), VerificationRequest{})
-	assert.NoError(t, err)
-}
-
 func TestWebhook_String(t *testing.T) {
-	wh, err := NewWebhook(okWebhookClient, WebhookParams{WebhookURL: "https://example.org/webhook"})
+	wh, err := NewWebhook(WebhookParams{WebhookURL: "https://example.org/webhook"})
 	assert.NoError(t, err)
 	assert.NotNil(t, wh)
 
