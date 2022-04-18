@@ -86,6 +86,11 @@ func (e *Email) Send(ctx context.Context, destination, text string) error {
 	}
 }
 
+// Schema returns schema prefix supported by this client
+func (e *Email) Schema() string {
+	return "mailto"
+}
+
 // String representation of Email object
 func (e *Email) String() string {
 	str := fmt.Sprintf("email: with username '%s' at server %s:%d", e.Username, e.Host, e.Port)

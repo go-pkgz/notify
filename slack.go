@@ -45,6 +45,11 @@ func (s *Slack) Send(ctx context.Context, destination, text string) error {
 	}
 }
 
+// Schema returns schema prefix supported by this client
+func (s *Slack) Schema() string {
+	return "slack"
+}
+
 func (s *Slack) String() string {
 	return "slack notifications destination"
 }

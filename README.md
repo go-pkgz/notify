@@ -27,22 +27,18 @@ import (
 	"github.com/go-pkgz/notify"
 )
 
-type Notifier interface {
-	fmt.Stringer
-	Send(ctx context.Context, destination, text string) error
-}
-
 func main() {
 	// create notifiers
-	notifiers := []Notifier{notify.NewWebhook(notify.WebhookParams{})}
-	for _, n := range notifiers {
-		err := n.Send(
-			context.Background(),
-			"https://example.org/webhook",
-			"Hello, world!",
-		)
-		fmt.Printf("Sent message using %s, error: %s", n, err))
+	notifiers := []notify.Notifier{
+		notify.NewWebhook(notify.WebhookParams{}),
+		notify.NewEmail(notify.SMTPParams{}),
+		notify.NewSlack("token"),
 	}
+	err := notify.Send(context.Background(), notifiers, "https://example.com/webhook", "Hello, world!")
+	if err != nil {
+		fmt.Printf("Sent message error: %s", err))
+	}
+}
 ```
 
 ### Email
@@ -104,7 +100,6 @@ package main
 import (
 	"context"
 	"log"
-	"time"
 
 	"github.com/go-pkgz/notify"
 	"github.com/slack-go/slack"
@@ -115,7 +110,7 @@ func main() {
 		"token",
 		slack.OptionDebug(true), // optional, you can pass any slack.Options
 	)
-	err := wh.Send(context.Background(), "slack:#general", "Hello, World!")
+	err := wh.Send(context.Background(), "slack:general", "Hello, World!")
 	if err != nil {
 		log.Fatalf("problem sending message using slack, %v", err)
 	}

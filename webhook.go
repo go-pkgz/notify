@@ -78,6 +78,11 @@ func (wh *Webhook) Send(ctx context.Context, destination, text string) error {
 	return nil
 }
 
+// Schema returns schema prefix supported by this client
+func (wh *Webhook) Schema() string {
+	return "http"
+}
+
 // String describes the webhook instance
 func (wh *Webhook) String() string {
 	str := fmt.Sprintf("webhook notification with timeout %s", wh.Timeout)
