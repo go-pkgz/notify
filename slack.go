@@ -2,64 +2,85 @@ package notify
 
 import (
 	"context"
+	"fmt"
+	"net/url"
+	"strings"
 
-	log "github.com/go-pkgz/lgr"
 	"github.com/pkg/errors"
 	"github.com/slack-go/slack"
 )
 
-// Slack implements notify.Destination for Slack
+// Slack notifications client
 type Slack struct {
-	channelID   string
-	channelName string
-	client      *slack.Client
+	client *slack.Client
 }
 
-// NewSlack makes Slack bot for notifications
-func NewSlack(token, channelName string, opts ...slack.Option) (*Slack, error) {
-	if channelName == "" {
-		channelName = "general"
-	}
+// NewSlack makes Slack client for notifications
+func NewSlack(token string, opts ...slack.Option) *Slack {
+	return &Slack{client: slack.New(token, opts...)}
+}
 
-	client := slack.New(token, opts...)
-	res := &Slack{client: client, channelName: channelName}
-
-	channelID, err := res.findChannelIDByName(channelName)
+// Send sends the message over Slack, with "title", "titleLink" and "attachmentText" parsed from destination field
+// with "slack:" schema same way "mailto:" schema is constructed, for example:
+// slack:channelName
+// slack:channelID
+// slack:userID
+// slack:channel?title=title&attachmentText=test%20text&titleLink=https://example.org
+func (s *Slack) Send(ctx context.Context, destination, text string) error {
+	channelID, attachment, err := s.parseDestination(destination)
 	if err != nil {
-		return nil, errors.Wrap(err, "can not find slack channel '"+channelName+"'")
+		return fmt.Errorf("problem parsing destination: %s", err)
+	}
+	options := []slack.MsgOption{slack.MsgOptionText(text, false)}
+	if attachment.Title != "" {
+		options = append(options, slack.MsgOptionAttachments(attachment))
 	}
 
-	res.channelID = channelID
-	log.Printf("[DEBUG] create new slack notifier for chan %s", channelID)
-
-	return res, nil
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		_, _, err = s.client.PostMessageContext(ctx, channelID, options...)
+		return err
+	}
 }
 
-// SendWithAttachment message with link attachment to the Slack channel
-func (t *Slack) SendWithAttachment(ctx context.Context, text, titleLink, title, attachmentText string) error {
-	_, _, err := t.client.PostMessageContext(
-		ctx,
-		t.channelID,
-		slack.MsgOptionText(text, false),
-		slack.MsgOptionAttachments(
-			slack.Attachment{
-				TitleLink: titleLink,
-				Title:     title,
-				Text:      attachmentText,
-			},
-		),
-	)
-	return err
+func (s *Slack) String() string {
+	return "slack notifications destination"
 }
 
-func (t *Slack) String() string {
-	return "slack: " + t.channelName + " (" + t.channelID + ")"
+// parses "slack:" in a manner "mailto:" URL is parsed url and returns channelID and attachment.
+// if channelID is channel name and not ID (starting with C for channel and with U for user),
+// then it will be resolved to ID.
+func (s *Slack) parseDestination(destination string) (string, slack.Attachment, error) {
+	// parse URL
+	u, err := url.Parse(destination)
+	if err != nil {
+		return "", slack.Attachment{}, err
+	}
+	if u.Scheme != "slack" {
+		return "", slack.Attachment{}, fmt.Errorf("unsupported scheme %s, should be slack", u.Scheme)
+	}
+	channelID := u.Opaque
+	if !strings.HasPrefix(u.Opaque, "C") && !strings.HasPrefix(u.Opaque, "U") {
+		channelID, err = s.findChannelIDByName(u.Opaque)
+		if err != nil {
+			return "", slack.Attachment{}, fmt.Errorf("problem retrieving channel ID for #%s: %w", u.Opaque, err)
+		}
+	}
+
+	return channelID,
+		slack.Attachment{
+			Title:     u.Query().Get("title"),
+			TitleLink: u.Query().Get("titleLink"),
+			Text:      u.Query().Get("attachmentText"),
+		}, nil
 }
 
-func (t *Slack) findChannelIDByName(name string) (string, error) {
+func (s *Slack) findChannelIDByName(name string) (string, error) {
 	params := slack.GetConversationsParameters{}
 	for {
-		channels, next, err := t.client.GetConversations(&params)
+		channels, next, err := s.client.GetConversations(&params)
 		if err != nil {
 			return "", err
 		}

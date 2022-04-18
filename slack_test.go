@@ -10,73 +10,79 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/slack-go/slack"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
-
-func TestSlack_New(t *testing.T) {
-
-	ts := newMockSlackServer()
-	defer ts.Close()
-
-	tb, err := ts.newClient("general")
-	assert.NoError(t, err)
-	assert.NotNil(t, tb)
-	assert.Equal(t, "C12345678", tb.channelID)
-
-	_, err = ts.newClient("")
-	assert.NoError(t, err)
-	assert.NotNil(t, tb)
-	assert.Equal(t, "general", tb.channelName, "#channel was set to general when not provided")
-
-	_, err = ts.newClient("unknown-channel")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no such channel")
-}
 
 func TestSlack_Send(t *testing.T) {
 	ts := newMockSlackServer()
 	defer ts.Close()
 
-	tb, err := ts.newClient("general")
-	assert.NoError(t, err)
+	tb := ts.newClient()
 	assert.NotNil(t, tb)
+	assert.Equal(t, "slack notifications destination", tb.String())
 
-	err = tb.SendWithAttachment(context.TODO(), "", "", "", "")
+	err := tb.Send(context.TODO(), "slack:general?title=title&attachmentText=test%20text&titleLink=https://example.org", "test text")
 	assert.NoError(t, err)
 
-	tb, err = ts.newClient("general")
-	assert.NoError(t, err)
 	ts.isServerDown = true
-	err = tb.SendWithAttachment(context.TODO(), "", "", "", "")
-	require.Error(t, err)
+	err = tb.Send(context.Background(), "slack:general?title=title&attachmentText=test%20text&titleLink=https://example.org", "test text")
 	assert.Contains(t, err.Error(), "slack server error", "send on broken client")
 }
 
-func TestSlack_Name(t *testing.T) {
+func TestSlackSendClientError(t *testing.T) {
 	ts := newMockSlackServer()
 	defer ts.Close()
 
-	tb, err := ts.newClient("general")
-	assert.NoError(t, err)
-	assert.NotNil(t, tb)
-	assert.Equal(t, "slack: general (C12345678)", tb.String())
+	slck := ts.newClient()
+	assert.NotNil(t, slck)
+	assert.Equal(t, "slack notifications destination", slck.String())
+
+	// no destination set
+	assert.EqualError(t, slck.Send(context.Background(), "", ""),
+		"problem parsing destination: unsupported scheme , should be slack")
+
+	// wrong scheme
+	assert.EqualError(t, slck.Send(context.Background(), "https://example.org", ""),
+		"problem parsing destination: unsupported scheme https, should be slack")
+
+	// bad destination set
+	assert.EqualError(t, slck.Send(context.Background(), "%", ""),
+		`problem parsing destination: parse "%": invalid URL escape "%"`)
+
+	// can't retrieve channel ID
+	ts.listingIsBroken = true
+	assert.EqualError(t, slck.Send(context.Background(), "slack:general", ""),
+		"problem parsing destination: problem retrieving channel ID for #general:"+
+			" slack server error: 500 Internal Server Error")
+	ts.listingIsBroken = false
+
+	// non-existing channel
+	assert.EqualError(t, slck.Send(context.Background(), "slack:non-existent", ""),
+		"problem parsing destination: problem retrieving channel ID for #non-existent: no such channel")
+
+	// canceled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.EqualError(t, slck.Send(ctx, "slack:general?title=test", ""), "context canceled")
 }
 
 type mockSlackServer struct {
 	*httptest.Server
-	isServerDown bool
+	isServerDown    bool
+	listingIsBroken bool
 }
 
-func (ts *mockSlackServer) newClient(channelName string) (*Slack, error) {
-	return NewSlack("any-token", channelName, slack.OptionAPIURL(ts.URL+"/"))
+func (ts *mockSlackServer) newClient() *Slack {
+	return NewSlack("any-token", slack.OptionAPIURL(ts.URL+"/"))
 }
 
 func newMockSlackServer() *mockSlackServer {
-
 	mockServer := mockSlackServer{}
 	router := chi.NewRouter()
 	router.Post("/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		s := `{
+		if mockServer.listingIsBroken {
+			w.WriteHeader(500)
+		} else {
+			s := `{
 		    "ok": true,
 		    "channels": [
 		        {
@@ -109,14 +115,13 @@ func newMockSlackServer() *mockSlackServer {
 		        "next_cursor": ""
 		    }
 		}`
-		_, _ = w.Write([]byte(s))
+			_, _ = w.Write([]byte(s))
+		}
 	})
 
 	router.Post("/chat.postMessage", func(w http.ResponseWriter, r *http.Request) {
-
 		if mockServer.isServerDown {
 			w.WriteHeader(500)
-
 		} else {
 			s := `{
 			    "ok": true,

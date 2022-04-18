@@ -91,6 +91,37 @@ func main() {
 
 ### Slack
 
+`slack:` scheme akin to `mailto:` is supported. `title`, `titleLink`, `attachmentText` and query params are used: if they are defined, message would be sent with a [text attachment](https://api.slack.com/reference/messaging/attachments). Examples:
+
+- `slack:channel`
+- `slack:channelID`
+- `slack:userID`
+- `slack:channel?title=title&attachmentText=test%20text&titleLink=https://example.org`
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+	"time"
+
+	"github.com/go-pkgz/notify"
+	"github.com/slack-go/slack"
+)
+
+func main() {
+	wh := notify.NewSlack(
+		"token",
+		slack.OptionDebug(true), // optional, you can pass any slack.Options
+	)
+	err := wh.Send(context.Background(), "slack:#general", "Hello, World!")
+	if err != nil {
+		log.Fatalf("problem sending message using slack, %v", err)
+	}
+}
+```
+
 ### Webhook
 
 `http://` and `https://` schemas are supported.
