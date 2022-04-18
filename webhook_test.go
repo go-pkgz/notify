@@ -67,13 +67,13 @@ func TestWebhook_Send(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, wh)
 
-	err = wh.SendWithAttachment(context.TODO(), "some_text")
+	err = wh.Send(context.TODO(), "some_text")
 	assert.NoError(t, err)
 
 	wh, err = NewWebhook(WebhookParams{WebhookURL: "https://example.org/webhook"})
 	wh.webhookClient = okWebhookClient
 	assert.NoError(t, err)
-	err = wh.SendWithAttachment(nil, "some_text") //nolint
+	err = wh.Send(nil, "some_text") //nolint
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unable to create webhook request")
 
@@ -82,7 +82,7 @@ func TestWebhook_Send(t *testing.T) {
 		return nil, errors.New("request failed")
 	})
 	assert.NoError(t, err)
-	err = wh.SendWithAttachment(context.TODO(), "some_text")
+	err = wh.Send(context.TODO(), "some_text")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "webhook request failed")
 
@@ -96,7 +96,7 @@ func TestWebhook_Send(t *testing.T) {
 		}, nil
 	})
 	assert.NoError(t, err)
-	err = wh.SendWithAttachment(context.TODO(), "some_text")
+	err = wh.Send(context.TODO(), "some_text")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "non-OK status code: 404, body: not found")
 
@@ -110,7 +110,7 @@ func TestWebhook_Send(t *testing.T) {
 		}, nil
 	})
 	assert.NoError(t, err)
-	err = wh.SendWithAttachment(context.TODO(), "some_text")
+	err = wh.Send(context.TODO(), "some_text")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "non-OK status code: 404")
 	assert.NotContains(t, err.Error(), "body")

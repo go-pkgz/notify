@@ -51,8 +51,8 @@ func NewWebhook(params WebhookParams) (*Webhook, error) {
 	return res, nil
 }
 
-// SendWithAttachment sends Webhook notification
-func (t *Webhook) SendWithAttachment(ctx context.Context, text string) error {
+// Send sends Webhook notification
+func (t *Webhook) Send(ctx context.Context, text string) error {
 	payload := bytes.NewBufferString(text)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", t.WebhookURL, payload)
 	if err != nil {
@@ -77,7 +77,7 @@ func (t *Webhook) SendWithAttachment(ctx context.Context, text string) error {
 		errMsg := fmt.Sprintf("webhook request failed with non-OK status code: %d", resp.StatusCode)
 		respBody, e := io.ReadAll(resp.Body)
 		if e != nil {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 		return fmt.Errorf("%s, body: %s", errMsg, respBody)
 	}
