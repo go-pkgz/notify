@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/go-pkgz/lgr"
 	"github.com/pkg/errors"
 )
 
@@ -17,9 +16,8 @@ const webhookTimeOut = 5000 * time.Millisecond
 
 // WebhookParams contain settings for webhook notifications
 type WebhookParams struct {
-	WebhookURL string
-	Timeout    time.Duration
-	Headers    []string
+	Timeout time.Duration
+	Headers []string
 }
 
 // Webhook implements notify.Destination for Webhook notifications
@@ -34,11 +32,8 @@ type webhookClient interface {
 }
 
 // NewWebhook makes Webhook
-func NewWebhook(params WebhookParams) (*Webhook, error) {
+func NewWebhook(params WebhookParams) *Webhook {
 	res := &Webhook{WebhookParams: params}
-	if res.WebhookURL == "" {
-		return nil, errors.New("webhook URL is required for webhook notifications")
-	}
 
 	if res.Timeout == 0 {
 		res.Timeout = webhookTimeOut
@@ -46,20 +41,18 @@ func NewWebhook(params WebhookParams) (*Webhook, error) {
 
 	res.webhookClient = &http.Client{Timeout: 5 * time.Second}
 
-	log.Printf("[DEBUG] create new webhook notifier for %s", res.WebhookURL)
-
-	return res, nil
+	return res
 }
 
 // Send sends Webhook notification
-func (t *Webhook) Send(ctx context.Context, text string) error {
+func (wh *Webhook) Send(ctx context.Context, destination, text string) error {
 	payload := bytes.NewBufferString(text)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", t.WebhookURL, payload)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", destination, payload)
 	if err != nil {
 		return errors.Wrap(err, "unable to create webhook request")
 	}
 
-	for _, h := range t.Headers {
+	for _, h := range wh.Headers {
 		elems := strings.Split(h, ":")
 		if len(elems) != 2 {
 			continue
@@ -67,7 +60,7 @@ func (t *Webhook) Send(ctx context.Context, text string) error {
 		httpReq.Header.Set(strings.TrimSpace(elems[0]), strings.TrimSpace(elems[1]))
 	}
 
-	resp, err := t.webhookClient.Do(httpReq)
+	resp, err := wh.webhookClient.Do(httpReq)
 	if err != nil {
 		return errors.Wrap(err, "webhook request failed")
 	}
@@ -86,6 +79,10 @@ func (t *Webhook) Send(ctx context.Context, text string) error {
 }
 
 // String describes the webhook instance
-func (t *Webhook) String() string {
-	return fmt.Sprintf("webhook notification to %s", t.WebhookURL)
+func (wh *Webhook) String() string {
+	str := fmt.Sprintf("webhook notification with timeout %s", wh.Timeout)
+	if wh.Headers != nil {
+		str += fmt.Sprintf(" and headers %v", wh.Headers)
+	}
+	return str
 }

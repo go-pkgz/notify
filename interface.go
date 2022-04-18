@@ -8,5 +8,5 @@ import (
 // service interface, just to verify that all notifiers implement it
 type notifier interface {
 	fmt.Stringer
-	Send(context.Context, string) error
+	Send(ctx context.Context, destination, text string) error
 }
