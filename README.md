@@ -29,19 +29,30 @@ import (
 
 type Notifier interface {
 	fmt.Stringer
-	Send(ctx context.Context, text string) error
+	Send(ctx context.Context, destination, text string) error
 }
 
 func main() {
 	// create notifiers
 	notifiers := []Notifier{notify.NewWebhook(notify.WebhookParams{})}
 	for _, n := range notifiers {
-		err := n.Send(context.Background(), "https://example.org/webhook", "Hello, world!")
+		err := n.Send(
+			context.Background(),
+			"https://example.org/webhook",
+			"Hello, world!",
+		)
 		fmt.Printf("Sent message using %s, error: %s", n, err))
 	}
 ```
 
 ### Email
+
+`mailto:` [scheme](https://datatracker.ietf.org/doc/html/rfc6068) is supported. Only `subject` and `from` query params are used.
+
+Examples:
+
+- `mailto:"John Wayne"<john@example.org>?subject=test-subj&from="Notifier"<notify@example.org>`
+- `mailto:addr1@example.org,addr2@example.org?&subject=test-subj&from=notify@example.org`
 
 ```go
 package main
@@ -65,9 +76,13 @@ func main() {
 		Password:    "password",
 		TimeOut:     time.Second * 10, // default is 30 seconds
 	})
-	err := wh.Send(context.Background(), "???", "Hello, World!")
+	err := wh.Send(
+		context.Background(),
+		`mailto:"John Wayne"<john@example.org>?subject=test-subj&from="Notifier"<notify@example.org>`,
+		"Hello, World!",
+	)
 	if err != nil {
-		log.Fatalf("problem sending message using webhook, %v", err)
+		log.Fatalf("problem sending message using email, %v", err)
 	}
 }
 ```
@@ -77,6 +92,8 @@ func main() {
 ### Slack
 
 ### Webhook
+
+`http://` and `https://` schemas are supported.
 
 ```go
 package main

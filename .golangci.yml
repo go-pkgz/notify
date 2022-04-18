@@ -54,6 +54,7 @@ linters:
     - nakedret
     - gosimple
     - prealloc
+    - whitespace
   fast: false
   disable-all: true
 

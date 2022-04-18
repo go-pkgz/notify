@@ -20,7 +20,7 @@ type WebhookParams struct {
 	Headers []string
 }
 
-// Webhook implements notify.Destination for Webhook notifications
+// Webhook notifications client
 type Webhook struct {
 	WebhookParams
 	webhookClient webhookClient

@@ -2,8 +2,9 @@ package notify
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"net/mail"
+	"net/url"
 	"time"
 
 	"github.com/go-pkgz/email"
@@ -21,7 +22,7 @@ type SMTPParams struct {
 	TimeOut     time.Duration // TCP connection timeout
 }
 
-// Email client
+// Email notifications client
 type Email struct {
 	SMTPParams
 	sender *email.Sender
@@ -67,22 +68,21 @@ func NewEmail(smtpParams SMTPParams) *Email {
 	return &Email{sender: sender, SMTPParams: smtpParams}
 }
 
-// Send sends the message over email, with "from", "to" and "subject" encoded into destination field.
+// Send sends the message over Email, with "from", "to" and "subject" parsed from destination field
+// with "mailto:" schema. Example:
+// mailto:"John Wayne"<john@example.org>?subject=test-subj&from="Notifier"<notify@example.org>
+// mailto:addr1@example.org,addr2@example.org?&subject=test-subj&from=notify@example.org
 func (e *Email) Send(ctx context.Context, destination, text string) error {
-	if destination == "" {
-		return errors.New("empty destination")
+	emailParams, err := e.parseDestination(destination)
+	if err != nil {
+		return fmt.Errorf("problem parsing destination: %s", err)
 	}
+
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		return e.sender.Send(text,
-			email.Params{
-				// TODO: set properly from destination, document destination format
-				From:    "me@example.com",
-				To:      []string{"to@example.com"},
-				Subject: "Hello world!",
-			})
+		return e.sender.Send(text, emailParams)
 	}
 }
 
@@ -93,4 +93,32 @@ func (e *Email) String() string {
 		str += " with TLS"
 	}
 	return str
+}
+
+// parses "mailto:" URL and returns email parameters
+func (e *Email) parseDestination(destination string) (email.Params, error) {
+	// parse URL
+	u, err := url.Parse(destination)
+	if err != nil {
+		return email.Params{}, err
+	}
+	if u.Scheme != "mailto" {
+		return email.Params{}, fmt.Errorf("unsupported scheme %s, should be mailto", u.Scheme)
+	}
+
+	// parse "to" address(es)
+	addresses, err := mail.ParseAddressList(u.Opaque)
+	if err != nil {
+		return email.Params{}, fmt.Errorf("problem parsing email recipients: %w", err)
+	}
+	destinations := []string{}
+	for _, addr := range addresses {
+		destinations = append(destinations, addr.String())
+	}
+
+	return email.Params{
+		From:    u.Query().Get("from"),
+		To:      destinations,
+		Subject: u.Query().Get("subject"),
+	}, nil
 }
