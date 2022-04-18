@@ -43,6 +43,35 @@ func main() {
 
 ### Email
 
+```go
+package main
+
+import (
+	"context"
+	"log"
+	"time"
+
+	"github.com/go-pkgz/notify"
+)
+
+func main() {
+	wh := notify.NewEmail(notify.SMTPParams{
+		Host:        "localhost", // the only required field, others are optional
+		Port:        25,
+		TLS:         false, // TLS, but not STARTTLS
+		ContentType: "text/html",
+		Charset:     "UTF-8",
+		Username:    "username",
+		Password:    "password",
+		TimeOut:     time.Second * 10, // default is 30 seconds
+	})
+	err := wh.Send(context.Background(), "???", "Hello, World!")
+	if err != nil {
+		log.Fatalf("problem sending message using webhook, %v", err)
+	}
+}
+```
+
 ### Telegram
 
 ### Slack
