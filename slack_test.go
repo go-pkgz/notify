@@ -19,8 +19,9 @@ func TestSlack_Send(t *testing.T) {
 	tb := ts.newClient()
 	assert.NotNil(t, tb)
 	assert.Equal(t, "slack notifications destination", tb.String())
+	assert.Equal(t, "slack", tb.Schema())
 
-	err := tb.Send(context.TODO(), "slack:general?title=title&attachmentText=test%20text&titleLink=https://example.org", "test text")
+	err := tb.Send(context.Background(), "slack:general?title=title&attachmentText=test%20text&titleLink=https://example.org", "test text")
 	assert.NoError(t, err)
 
 	ts.isServerDown = true

@@ -28,4 +28,5 @@ func TestInterface(t *testing.T) {
 	assert.Implements(t, (*Notifier)(nil), new(Email))
 	assert.Implements(t, (*Notifier)(nil), new(Webhook))
 	assert.Implements(t, (*Notifier)(nil), new(Slack))
+	assert.Implements(t, (*Notifier)(nil), new(Telegram))
 }

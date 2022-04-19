@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,25 +15,22 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/microcosm-cc/bluemonday"
-
 	log "github.com/go-pkgz/lgr"
 	"github.com/go-pkgz/repeater"
-	"github.com/pkg/errors"
+	"github.com/microcosm-cc/bluemonday"
+	"golang.org/x/net/html"
 )
 
 // TelegramParams contain settings for telegram notifications
 type TelegramParams struct {
-	AdminChannelID       string        // unique identifier for the target chat or username of the target channel (in the format @channelusername)
 	Token                string        // token for telegram bot API interactions
 	Timeout              time.Duration // http client timeout
-	UserNotifications    bool          // flag which enables user notifications
 	ErrorMsg, SuccessMsg string        // messages for successful and unsuccessful subscription requests to bot
 
 	apiPrefix string // changed only in tests
 }
 
-// Telegram implements notify.Destination for telegram
+// Telegram notifications client
 type Telegram struct {
 	TelegramParams
 
@@ -50,8 +48,8 @@ type Telegram struct {
 	}
 }
 
-// TelegramMsg is used to send message trough Telegram bot API
-type TelegramMsg struct {
+// telegramMsg is used to send message trough Telegram bot API
+type telegramMsg struct {
 	Text      string `json:"text"`
 	ParseMode string `json:"parse_mode,omitempty"`
 }
@@ -84,6 +82,11 @@ func NewTelegram(params TelegramParams) (*Telegram, error) {
 	if res.Timeout == 0 {
 		res.Timeout = telegramTimeOut
 	}
+
+	if res.SuccessMsg == "" {
+		res.SuccessMsg = "✅ You have successfully authenticated, check the web!"
+	}
+
 	res.apiPollInterval = tgPollInterval
 	res.expiredCleanupInterval = tgCleanupInterval
 	log.Printf("[DEBUG] create new telegram notifier for api=%s, timeout=%s", res.apiPrefix, res.Timeout)
@@ -93,7 +96,7 @@ func NewTelegram(params TelegramParams) (*Telegram, error) {
 
 	botInfo, err := res.botInfo(ctx)
 	if err != nil {
-		return nil, errors.Wrapf(err, "can't retrieve bot info from Telegram API")
+		return nil, fmt.Errorf("can't retrieve bot info from Telegram API: %w", err)
 	}
 	res.username = botInfo.Username
 
@@ -102,24 +105,36 @@ func NewTelegram(params TelegramParams) (*Telegram, error) {
 	return &res, nil
 }
 
-// SendMessage sends provided message to Telegram chat
-func (t *Telegram) SendMessage(ctx context.Context, b []byte, chatID string) error {
-	if _, err := strconv.ParseInt(chatID, 10, 64); err != nil {
-		chatID = "@" + chatID // if chatID not a number enforce @ prefix
+// Send sends provided message to Telegram chat, with `parseMode` parsed from destination field (Markdown by default)
+// with "telegram:" schema same way "mailto:" schema is constructed, for example:
+// `telegram:channel`
+// `telegram:chatID` // chatID is a number, like `-1001480738202`
+// telegram:channel?parseMode=HTML
+func (t *Telegram) Send(ctx context.Context, destination, text string) error {
+	chatID, parseMode, err := t.parseDestination(destination)
+	if err != nil {
+		return fmt.Errorf("problem parsing destination: %w", err)
 	}
 
-	url := fmt.Sprintf("SendMessage?chat_id=%s&disable_web_page_preview=true", chatID)
+	body := telegramMsg{Text: text, ParseMode: parseMode}
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("sendMessage?chat_id=%s&disable_web_page_preview=true", chatID)
 	return t.Request(ctx, url, b, &struct{}{})
 }
 
-// TelegramSupportedHTML returns HTML with only tags allowed in Telegram HTML message payload
+// TelegramSupportedHTML returns HTML with only tags allowed in Telegram HTML message payload, also trims ending newlines
 // https://core.telegram.org/bots/api#html-style
 func TelegramSupportedHTML(htmlText string) string {
+	adjustedHTMLText := adjustHTMLTags(htmlText)
 	p := bluemonday.NewPolicy()
 	p.AllowElements("b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "a", "code", "pre")
 	p.AllowAttrs("href").OnElements("a")
 	p.AllowAttrs("class").OnElements("code")
-	return p.Sanitize(htmlText)
+	return strings.TrimRight(p.Sanitize(adjustedHTMLText), "\n")
 }
 
 // EscapeTelegramText returns text sanitized of symbols not allowed inside other HTML tags in Telegram HTML message payload
@@ -130,6 +145,42 @@ func EscapeTelegramText(text string) string {
 	text = strings.ReplaceAll(text, "<", "&lt;")
 	text = strings.ReplaceAll(text, ">", "&gt;")
 	return text
+}
+
+// telegram not allow h1-h6 tags
+// replace these tags with a combination of <b> and <i> for visual distinction
+func adjustHTMLTags(htmlText string) string {
+	buff := strings.Builder{}
+	tokenizer := html.NewTokenizer(strings.NewReader(htmlText))
+	for {
+		if tokenizer.Next() == html.ErrorToken {
+			return buff.String()
+		}
+		token := tokenizer.Token()
+		switch token.Type {
+		case html.StartTagToken, html.EndTagToken:
+			switch token.Data {
+			case "h1", "h2", "h3":
+				if token.Type == html.StartTagToken {
+					buff.WriteString("<b>")
+				}
+				if token.Type == html.EndTagToken {
+					buff.WriteString("</b>")
+				}
+			case "h4", "h5", "h6":
+				if token.Type == html.StartTagToken {
+					buff.WriteString("<i><b>")
+				}
+				if token.Type == html.EndTagToken {
+					buff.WriteString("</b></i>")
+				}
+			default:
+				buff.WriteString(token.String())
+			}
+		default:
+			buff.WriteString(token.String())
+		}
+	}
 }
 
 // TelegramUpdate contains update information, which is used from whole telegram API response
@@ -250,21 +301,44 @@ func (t *Telegram) ProcessUpdate(ctx context.Context, textUpdate string) error {
 	}()
 	var updates TelegramUpdate
 	if err := json.Unmarshal([]byte(textUpdate), &updates); err != nil {
-		return errors.Wrap(err, "failed to decode provided telegram update")
+		return fmt.Errorf("failed to decode provided telegram update: %w", err)
 	}
 	t.processUpdates(ctx, &updates)
 	return nil
 }
 
+// Schema returns schema prefix supported by this client
+func (t *Telegram) Schema() string {
+	return "telegram"
+}
+
 func (t *Telegram) String() string {
-	result := "telegram"
-	if t.AdminChannelID != "" {
-		result += " with admin notifications to " + t.AdminChannelID
+	return "telegram notifications destination"
+}
+
+// parses "telegram:" in a manner "mailto:" URL is parsed url and returns chatID and parseMode.
+// if chatID is channel name and not a numerical ID, `@` will be	added to it
+func (t *Telegram) parseDestination(destination string) (chatID, parseMode string, err error) {
+	// parse URL
+	u, err := neturl.Parse(destination)
+	if err != nil {
+		return "", "", err
 	}
-	if t.UserNotifications {
-		result += " with user notifications enabled"
+	if u.Scheme != "telegram" {
+		return "", "", fmt.Errorf("unsupported scheme %s, should be telegram", u.Scheme)
 	}
-	return result
+
+	chatID = u.Opaque
+	if _, err := strconv.ParseInt(chatID, 10, 64); err != nil {
+		chatID = "@" + chatID // if chatID not a number enforce @ prefix
+	}
+
+	parseMode = "Markdown"
+	if u.Query().Get("parseMode") != "" {
+		parseMode = u.Query().Get("parseMode")
+	}
+
+	return chatID, parseMode, nil
 }
 
 // getUpdates fetches incoming updates
@@ -278,7 +352,7 @@ func (t *Telegram) getUpdates(ctx context.Context) (*TelegramUpdate, error) {
 
 	err := t.Request(ctx, url, nil, &result)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to fetch updates")
+		return nil, fmt.Errorf("failed to fetch updates: %w", err)
 	}
 
 	for _, u := range result.Result {
@@ -331,7 +405,7 @@ func (t *Telegram) processUpdates(ctx context.Context, updates *TelegramUpdate) 
 
 // sendText sends a plain text message to telegram peer
 func (t *Telegram) sendText(ctx context.Context, recipientID int, msg string) error {
-	url := fmt.Sprintf("SendMessage?chat_id=%d&text=%s", recipientID, neturl.PathEscape(msg))
+	url := fmt.Sprintf("sendMessage?chat_id=%d&text=%s", recipientID, neturl.PathEscape(msg))
 	return t.Request(ctx, url, nil, &struct{}{})
 }
 
@@ -366,13 +440,13 @@ func (t *Telegram) Request(ctx context.Context, method string, b []byte, data in
 			req.Header.Set("Content-Type", "application/json; charset=utf-8")
 		}
 		if err != nil {
-			return errors.Wrap(err, "failed to create request")
+			return fmt.Errorf("failed to create request: %w", err)
 		}
 
 		client := http.Client{Timeout: t.Timeout}
 		resp, err := client.Do(req)
 		if err != nil {
-			return errors.Wrap(err, "failed to send request")
+			return fmt.Errorf("failed to send request: %w", err)
 		}
 		defer resp.Body.Close()
 
@@ -381,7 +455,7 @@ func (t *Telegram) Request(ctx context.Context, method string, b []byte, data in
 		}
 
 		if err = json.NewDecoder(resp.Body).Decode(data); err != nil {
-			return errors.Wrap(err, "failed to decode json response")
+			return fmt.Errorf("failed to decode json response: %w", err)
 		}
 
 		return nil
@@ -393,7 +467,7 @@ func (t *Telegram) parseError(r io.Reader, statusCode int) error {
 		Description string `json:"description"`
 	}{}
 	if err := json.NewDecoder(r).Decode(&tgErr); err != nil {
-		return errors.Errorf("unexpected telegram API status code %d", statusCode)
+		return fmt.Errorf("unexpected telegram API status code %d", statusCode)
 	}
-	return errors.Errorf("unexpected telegram API status code %d, error: %q", statusCode, tgErr.Description)
+	return fmt.Errorf("unexpected telegram API status code %d, error: %q", statusCode, tgErr.Description)
 }

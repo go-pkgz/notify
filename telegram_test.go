@@ -18,73 +18,182 @@ func TestTelegram_New(t *testing.T) {
 	defer ts.Close()
 
 	tb, err := NewTelegram(TelegramParams{
-		AdminChannelID: "remark_test",
-		Token:          "good-token",
-		apiPrefix:      ts.URL + "/",
+		Token:     "good-token",
+		apiPrefix: ts.URL + "/",
 	})
 	assert.NoError(t, err)
 	assert.NotNil(t, tb)
 	assert.Equal(t, tb.Timeout, time.Second*5)
-	assert.Equal(t, "remark_test", tb.AdminChannelID, "@ added")
+	assert.Equal(t, "telegram", tb.Schema())
+	assert.Equal(t, "telegram notifications destination", tb.String())
 
 	_, err = NewTelegram(TelegramParams{
-		AdminChannelID: "remark_test",
-		Token:          "empty-json",
-		apiPrefix:      ts.URL + "/",
+		Token:     "empty-json",
+		apiPrefix: ts.URL + "/",
 	})
 	assert.EqualError(t, err, "can't retrieve bot info from Telegram API: received empty result")
 
 	st := time.Now()
 	_, err = NewTelegram(TelegramParams{
-		AdminChannelID: "remark_test",
-		Token:          "non-json-resp",
-		Timeout:        2 * time.Second,
-		apiPrefix:      ts.URL + "/",
+		Token:     "non-json-resp",
+		Timeout:   2 * time.Second,
+		apiPrefix: ts.URL + "/",
 	})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decode json response:")
 	assert.True(t, time.Since(st) >= 250*3*time.Millisecond)
 
 	_, err = NewTelegram(TelegramParams{
-		AdminChannelID: "remark_test",
-		Token:          "404",
-		Timeout:        2 * time.Second,
-		apiPrefix:      ts.URL + "/",
+		Token:     "404",
+		Timeout:   2 * time.Second,
+		apiPrefix: ts.URL + "/",
 	})
 	assert.EqualError(t, err, "can't retrieve bot info from Telegram API: unexpected telegram API status code 404")
 
 	_, err = NewTelegram(TelegramParams{
-		AdminChannelID: "remark_test",
-		Token:          "no-such-thing",
-		apiPrefix:      "http://127.0.0.1:4321/",
+		Token:     "no-such-thing",
+		apiPrefix: "http://127.0.0.1:4321/",
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "can't retrieve bot info from Telegram API")
 	assert.Contains(t, err.Error(), "dial tcp 127.0.0.1:4321: connect: connection refused")
 
 	_, err = NewTelegram(TelegramParams{
-		AdminChannelID: "remark_test",
-		Token:          "no-such-thing",
-		apiPrefix:      "",
+		Token:     "",
+		apiPrefix: "",
 	})
 	assert.Error(t, err, "empty api url not allowed")
 
 	_, err = NewTelegram(TelegramParams{
-		AdminChannelID: "remark_test",
-		Token:          "good-token",
-		Timeout:        2 * time.Second,
-		apiPrefix:      ts.URL + "/",
+		Token:     "good-token",
+		Timeout:   2 * time.Second,
+		apiPrefix: ts.URL + "/",
 	})
 	assert.NoError(t, err, "0 timeout allowed as default")
+}
 
-	tb, err = NewTelegram(TelegramParams{
-		AdminChannelID: "1234567890",
-		Token:          "good-token",
-		apiPrefix:      ts.URL + "/",
+func TestTelegram_Send(t *testing.T) {
+	ts := mockTelegramServer(nil)
+	defer ts.Close()
+
+	tb, err := NewTelegram(TelegramParams{
+		Token:     "good-token",
+		apiPrefix: ts.URL + "/",
 	})
 	assert.NoError(t, err)
 	assert.NotNil(t, tb)
-	assert.Equal(t, "1234567890", tb.AdminChannelID, "no @ prefix")
+
+	err = tb.Send(context.Background(), "telegram:test_user_channel?parseMode=HTML", "test message")
+	assert.NoError(t, err)
+
+	tb = &Telegram{
+		TelegramParams: TelegramParams{
+			Token:     "non-json-resp",
+			apiPrefix: ts.URL + "/",
+		}}
+	err = tb.Send(context.Background(), "telegram:test_user_channel", "test message")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unexpected telegram API status code 404", "send on broken tg")
+
+	// bad API URL
+	tb.apiPrefix = "http://non-existent"
+	err = tb.Send(context.Background(), "telegram:test_user_channel", "test message")
+	assert.Error(t, err)
+}
+
+func TestTelegram_Formatting(t *testing.T) {
+	text := `<h1 id="sample-markdown">Sample Markdown</h1>
+<p>This is some basic, sample markdown.</p>
+<h2 id="second-heading">Second Heading</h2>
+<ul>
+<li>Unordered lists, and:<ol>
+<li>One</li>
+<li>Two</li>
+<li>Three</li>
+</ol>
+</li>
+<li>More</li>
+</ul>
+<blockquote>
+<p>Blockquote</p>
+</blockquote>
+<p>And <strong>bold</strong>, <em>italics</em>, and even <em>italics and later <strong>bold</strong></em>. Even <del>strikethrough</del>. <a href="https://markdowntohtml.com">A link</a> to somewhere.</p>
+<p>And code highlighting:</p>
+<pre><code class="lang-js"><span class="hljs-keyword">var</span> foo = <span class="hljs-string">'bar'</span>;
+
+<span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">baz</span><span class="hljs-params">(s)</span> </span>{
+   <span class="hljs-keyword">return</span> foo + <span class="hljs-string">':'</span> + s;
+}
+</code></pre>
+<h4 id="fourth-heading">Fourth Heading</h4>
+<p>Or inline code like <code>var foo = 'bar';</code>.</p>
+<p>Or an image of bears</p>
+<p><img src="https://placebear.com/200/200" alt="bears"></p>
+<p>The end ...</p>
+`
+	cleanText := `<b>Sample Markdown</b>
+This is some basic, sample markdown.
+<b>Second Heading</b>
+
+Unordered lists, and:
+One
+Two
+Three
+
+
+More
+
+
+Blockquote
+
+And <strong>bold</strong>, <em>italics</em>, and even <em>italics and later <strong>bold</strong></em>. Even <del>strikethrough</del>. <a href="https://markdowntohtml.com">A link</a> to somewhere.
+And code highlighting:
+<pre><code class="lang-js">var foo = &#39;bar&#39;;
+
+function baz(s) {
+   return foo + &#39;:&#39; + s;
+}
+</code></pre>
+<i><b>Fourth Heading</b></i>
+Or inline code like <code>var foo = &#39;bar&#39;;</code>.
+Or an image of bears
+
+The end ...`
+
+	assert.Equal(t, cleanText, TelegramSupportedHTML(text))
+
+	username := "test<user>"
+	cleanUsername := "test&lt;user&gt;"
+	assert.Equal(t, cleanUsername, EscapeTelegramText(username))
+}
+
+func TestTelegramSendClientError(t *testing.T) {
+	ts := mockTelegramServer(nil)
+	defer ts.Close()
+
+	tg, err := NewTelegram(TelegramParams{
+		Token:     "good-token",
+		apiPrefix: ts.URL + "/",
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, tg)
+
+	// no destination set
+	assert.EqualError(t, tg.Send(context.Background(), "", ""),
+		"problem parsing destination: unsupported scheme , should be telegram")
+
+	// wrong scheme
+	assert.EqualError(t, tg.Send(context.Background(), "https://example.org", ""),
+		"problem parsing destination: unsupported scheme https, should be telegram")
+
+	// bad destination set
+	assert.EqualError(t, tg.Send(context.Background(), "%", ""),
+		`problem parsing destination: parse "%": invalid URL escape "%"`)
+
+	// canceled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.EqualError(t, tg.Send(ctx, "telegram:general?title=test", ""), "context canceled")
 }
 
 func TestTelegram_GetBotUsername(t *testing.T) {
@@ -92,9 +201,8 @@ func TestTelegram_GetBotUsername(t *testing.T) {
 	defer ts.Close()
 
 	tb, err := NewTelegram(TelegramParams{
-		AdminChannelID: "remark_test",
-		Token:          "good-token",
-		apiPrefix:      ts.URL + "/",
+		Token:     "good-token",
+		apiPrefix: ts.URL + "/",
 	})
 	assert.NoError(t, err)
 	assert.NotNil(t, tb)
@@ -155,7 +263,7 @@ const getUpdatesResp = `{
 func TestTelegram_GetUpdatesFlow(t *testing.T) {
 	first := true
 	ts := mockTelegramServer(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.String(), "SendMessage") {
+		if strings.Contains(r.URL.String(), "sendMessage") {
 			// respond normally to processUpdates attempt to send message back to user
 			_, _ = w.Write([]byte("{}"))
 			return
@@ -171,10 +279,8 @@ func TestTelegram_GetUpdatesFlow(t *testing.T) {
 	})
 	defer ts.Close()
 	tb, err := NewTelegram(TelegramParams{
-		AdminChannelID:    "remark_test",
-		Token:             "xxxsupersecretxxx",
-		UserNotifications: true,
-		apiPrefix:         ts.URL + "/",
+		Token:     "xxxsupersecretxxx",
+		apiPrefix: ts.URL + "/",
 	})
 	assert.NoError(t, err)
 
@@ -207,10 +313,8 @@ func TestTelegram_ProcessUpdateFlow(t *testing.T) {
 	})
 	defer ts.Close()
 	tb, err := NewTelegram(TelegramParams{
-		AdminChannelID:    "remark_test",
-		Token:             "xxxsupersecretxxx",
-		UserNotifications: true,
-		apiPrefix:         ts.URL + "/",
+		Token:     "xxxsupersecretxxx",
+		apiPrefix: ts.URL + "/",
 	})
 	assert.NoError(t, err)
 
@@ -262,10 +366,8 @@ func TestTelegram_SendText(t *testing.T) {
 	})
 	defer ts.Close()
 	tb, err := NewTelegram(TelegramParams{
-		AdminChannelID:    "remark_test",
-		Token:             "xxxsupersecretxxx",
-		UserNotifications: true,
-		apiPrefix:         ts.URL + "/",
+		Token:     "xxxsupersecretxxx",
+		apiPrefix: ts.URL + "/",
 	})
 	assert.NoError(t, err)
 
@@ -282,10 +384,8 @@ func TestTelegram_Error(t *testing.T) {
 	})
 	defer ts.Close()
 	tb, err := NewTelegram(TelegramParams{
-		AdminChannelID:    "remark_test",
-		Token:             "xxxsupersecretxxx",
-		UserNotifications: true,
-		apiPrefix:         ts.URL + "/",
+		Token:     "xxxsupersecretxxx",
+		apiPrefix: ts.URL + "/",
 	})
 	assert.NoError(t, err)
 
@@ -295,7 +395,7 @@ func TestTelegram_Error(t *testing.T) {
 
 func TestTelegram_TokenVerification(t *testing.T) {
 	ts := mockTelegramServer(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.String(), "SendMessage") {
+		if strings.Contains(r.URL.String(), "sendMessage") {
 			// respond normally to processUpdates attempt to send message back to user
 			_, _ = w.Write([]byte("{}"))
 			return
@@ -306,9 +406,8 @@ func TestTelegram_TokenVerification(t *testing.T) {
 	defer ts.Close()
 
 	tb, err := NewTelegram(TelegramParams{
-		AdminChannelID: "remark_test",
-		Token:          "good-token",
-		apiPrefix:      ts.URL + "/",
+		Token:     "good-token",
+		apiPrefix: ts.URL + "/",
 	})
 	assert.NoError(t, err)
 	assert.NotNil(t, tb)
@@ -407,7 +506,7 @@ func mockTelegramServer(h http.HandlerFunc) *httptest.Server {
 		w.WriteHeader(404)
 	})
 
-	router.Post("/good-token/SendMessage", func(w http.ResponseWriter, r *http.Request) {
+	router.Post("/good-token/sendMessage", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"ok": true}`))
 	})
 

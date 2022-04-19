@@ -24,6 +24,7 @@ func TestEmailNew(t *testing.T) {
 
 	assert.NotNil(t, email, "email returned")
 
+	assert.Equal(t, "mailto", email.Schema())
 	assert.Equal(t, smtpParams.TimeOut, email.TimeOut, "SMTPParams.TimOut unchanged after creation")
 	assert.Equal(t, smtpParams.Host, email.Host, "SMTPParams.Host unchanged after creation")
 	assert.Equal(t, smtpParams.Username, email.Username, "SMTPParams.Username unchanged after creation")
