@@ -2,11 +2,11 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
 
-	"github.com/pkg/errors"
 	"github.com/slack-go/slack"
 )
 
@@ -29,7 +29,7 @@ func NewSlack(token string, opts ...slack.Option) *Slack {
 func (s *Slack) Send(ctx context.Context, destination, text string) error {
 	channelID, attachment, err := s.parseDestination(destination)
 	if err != nil {
-		return fmt.Errorf("problem parsing destination: %s", err)
+		return fmt.Errorf("problem parsing destination: %w", err)
 	}
 	options := []slack.MsgOption{slack.MsgOptionText(text, false)}
 	if attachment.Title != "" {

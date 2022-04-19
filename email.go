@@ -75,7 +75,7 @@ func NewEmail(smtpParams SMTPParams) *Email {
 func (e *Email) Send(ctx context.Context, destination, text string) error {
 	emailParams, err := e.parseDestination(destination)
 	if err != nil {
-		return fmt.Errorf("problem parsing destination: %s", err)
+		return fmt.Errorf("problem parsing destination: %w", err)
 	}
 
 	select {

@@ -3,13 +3,12 @@ package notify
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 const webhookTimeOut = 5000 * time.Millisecond
@@ -49,7 +48,7 @@ func (wh *Webhook) Send(ctx context.Context, destination, text string) error {
 	payload := bytes.NewBufferString(text)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", destination, payload)
 	if err != nil {
-		return errors.Wrap(err, "unable to create webhook request")
+		return fmt.Errorf("unable to create webhook request: %w", err)
 	}
 
 	for _, h := range wh.Headers {
@@ -62,7 +61,7 @@ func (wh *Webhook) Send(ctx context.Context, destination, text string) error {
 
 	resp, err := wh.webhookClient.Do(httpReq)
 	if err != nil {
-		return errors.Wrap(err, "webhook request failed")
+		return fmt.Errorf("webhook request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
