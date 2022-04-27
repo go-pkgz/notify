@@ -16,7 +16,7 @@ const webhookTimeOut = 5000 * time.Millisecond
 // WebhookParams contain settings for webhook notifications
 type WebhookParams struct {
 	Timeout time.Duration
-	Headers []string
+	Headers []string // headers in format "header:value"
 }
 
 // Webhook notifications client
@@ -43,7 +43,8 @@ func NewWebhook(params WebhookParams) *Webhook {
 	return res
 }
 
-// Send sends Webhook notification
+// Send sends Webhook notification. Destination field is expected to have http:// or https:// schema:
+// https://example.com/webhook
 func (wh *Webhook) Send(ctx context.Context, destination, text string) error {
 	payload := bytes.NewBufferString(text)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", destination, payload)
