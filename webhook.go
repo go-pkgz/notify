@@ -38,7 +38,7 @@ func NewWebhook(params WebhookParams) *Webhook {
 		res.Timeout = webhookTimeOut
 	}
 
-	res.webhookClient = &http.Client{Timeout: 5 * time.Second}
+	res.webhookClient = &http.Client{Timeout: res.Timeout}
 
 	return res
 }
