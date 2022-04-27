@@ -28,13 +28,6 @@ type Email struct {
 	sender *email.Sender
 }
 
-// EmailMessage is a message to be sent with Email
-type EmailMessage struct {
-	From    string
-	To      string
-	Message string
-}
-
 // NewEmail makes new Email object
 func NewEmail(smtpParams SMTPParams) *Email {
 	var opts []email.Option
