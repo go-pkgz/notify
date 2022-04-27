@@ -15,6 +15,7 @@ type SMTPParams struct {
 	Host        string        // SMTP host
 	Port        int           // SMTP port
 	TLS         bool          // TLS auth
+	StartTLS    bool          // StartTLS auth
 	ContentType string        // Content type
 	Charset     string        // Character set
 	Username    string        // username
@@ -54,6 +55,10 @@ func NewEmail(smtpParams SMTPParams) *Email {
 
 	if smtpParams.TLS {
 		opts = append(opts, email.TLS(true))
+	}
+
+	if smtpParams.StartTLS {
+		opts = append(opts, email.STARTTLS(true))
 	}
 
 	sender := email.NewSender(smtpParams.Host, opts...)
