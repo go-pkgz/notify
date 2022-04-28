@@ -66,10 +66,10 @@ func NewEmail(smtpParams SMTPParams) *Email {
 	return &Email{sender: sender, SMTPParams: smtpParams}
 }
 
-// Send sends the message over Email, with "from", "to" and "subject" parsed from destination field
+// Send sends the message over Email, with "from" and "subject" parsed from destination field
 // with "mailto:" schema. Example:
 // mailto:"John Wayne"<john@example.org>?subject=test-subj&from="Notifier"<notify@example.org>
-// mailto:addr1@example.org,addr2@example.org?&subject=test-subj&from=notify@example.org
+// mailto:addr1@example.org,addr2@example.org?subject=test-subj&from=notify@example.org
 func (e *Email) Send(ctx context.Context, destination, text string) error {
 	emailParams, err := e.parseDestination(destination)
 	if err != nil {
@@ -109,7 +109,7 @@ func (e *Email) parseDestination(destination string) (email.Params, error) {
 		return email.Params{}, fmt.Errorf("unsupported scheme %s, should be mailto", u.Scheme)
 	}
 
-	// parse "to" address(es)
+	// parse destination address(es)
 	addresses, err := mail.ParseAddressList(u.Opaque)
 	if err != nil {
 		return email.Params{}, fmt.Errorf("problem parsing email recipients: %w", err)
