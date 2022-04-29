@@ -21,11 +21,14 @@ func NewSlack(token string, opts ...slack.Option) *Slack {
 }
 
 // Send sends the message over Slack, with "title", "titleLink" and "attachmentText" parsed from destination field
-// with "slack:" schema same way "mailto:" schema is constructed, for example:
-// slack:channelName
-// slack:channelID
-// slack:userID
-// slack:channel?title=title&attachmentText=test%20text&titleLink=https://example.org
+// with "slack:" schema same way "mailto:" schema is constructed.
+//
+// Example:
+//
+// - slack:channelName
+// - slack:channelID
+// - slack:userID
+// - slack:channel?title=title&attachmentText=test%20text&titleLink=https://example.org
 func (s *Slack) Send(ctx context.Context, destination, text string) error {
 	channelID, attachment, err := s.parseDestination(destination)
 	if err != nil {

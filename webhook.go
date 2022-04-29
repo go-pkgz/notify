@@ -43,8 +43,11 @@ func NewWebhook(params WebhookParams) *Webhook {
 	return res
 }
 
-// Send sends Webhook notification. Destination field is expected to have http:// or https:// schema:
-// https://example.com/webhook
+// Send sends Webhook notification. Destination field is expected to have http:// or https:// schema.
+//
+// Example:
+//
+// - https://example.com/webhook
 func (wh *Webhook) Send(ctx context.Context, destination, text string) error {
 	payload := bytes.NewBufferString(text)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", destination, payload)

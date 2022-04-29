@@ -106,10 +106,13 @@ func NewTelegram(params TelegramParams) (*Telegram, error) {
 }
 
 // Send sends provided message to Telegram chat, with `parseMode` parsed from destination field (Markdown by default)
-// with "telegram:" schema same way "mailto:" schema is constructed, for example:
-// `telegram:channel`
-// `telegram:chatID` // chatID is a number, like `-1001480738202`
-// telegram:channel?parseMode=HTML
+// with "telegram:" schema same way "mailto:" schema is constructed.
+//
+// Example:
+//
+// - telegram:channel
+// - telegram:chatID // chatID is a number, like `-1001480738202`
+// - telegram:channel?parseMode=HTML
 func (t *Telegram) Send(ctx context.Context, destination, text string) error {
 	chatID, parseMode, err := t.parseDestination(destination)
 	if err != nil {
@@ -127,6 +130,7 @@ func (t *Telegram) Send(ctx context.Context, destination, text string) error {
 }
 
 // TelegramSupportedHTML returns HTML with only tags allowed in Telegram HTML message payload, also trims ending newlines
+//
 // https://core.telegram.org/bots/api#html-style
 func TelegramSupportedHTML(htmlText string) string {
 	adjustedHTMLText := adjustHTMLTags(htmlText)
@@ -138,6 +142,7 @@ func TelegramSupportedHTML(htmlText string) string {
 }
 
 // EscapeTelegramText returns text sanitized of symbols not allowed inside other HTML tags in Telegram HTML message payload
+//
 // https://core.telegram.org/bots/api#html-style
 func EscapeTelegramText(text string) string {
 	// order is important
