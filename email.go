@@ -99,6 +99,9 @@ func (e *Email) String() string {
 	if e.TLS {
 		str += " with TLS"
 	}
+	if e.StartTLS {
+		str += " with StartTLS"
+	}
 	return str
 }
 
