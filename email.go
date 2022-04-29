@@ -66,10 +66,14 @@ func NewEmail(smtpParams SMTPParams) *Email {
 	return &Email{sender: sender, SMTPParams: smtpParams}
 }
 
-// Send sends the message over Email, with "from" and "subject" parsed from destination field
-// with "mailto:" schema. Example:
-// mailto:"John Wayne"<john@example.org>?subject=test-subj&from="Notifier"<notify@example.org>
-// mailto:addr1@example.org,addr2@example.org?subject=test-subj&from=notify@example.org
+// Send sends the message over Email, with "from", "subject" and "unsubscribeLink" parsed from destination field
+// with "mailto:" schema.
+// "unsubscribeLink" passed as a header, https://support.google.com/mail/answer/81126 -> "Use one-click unsubscribe"
+//
+// Example:
+//
+// - mailto:"John Wayne"<john@example.org>?subject=test-subj&from="Notifier"<notify@example.org>
+// - mailto:addr1@example.org,addr2@example.org?subject=test-subj&from=notify@example.org&unsubscribeLink=http://example.org/unsubscribe
 func (e *Email) Send(ctx context.Context, destination, text string) error {
 	emailParams, err := e.parseDestination(destination)
 	if err != nil {
@@ -120,8 +124,9 @@ func (e *Email) parseDestination(destination string) (email.Params, error) {
 	}
 
 	return email.Params{
-		From:    u.Query().Get("from"),
-		To:      destinations,
-		Subject: u.Query().Get("subject"),
+		From:            u.Query().Get("from"),
+		To:              destinations,
+		Subject:         u.Query().Get("subject"),
+		UnsubscribeLink: u.Query().Get("unsubscribeLink"),
 	}, nil
 }

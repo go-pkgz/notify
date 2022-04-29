@@ -4,7 +4,7 @@ go 1.17
 
 require (
 	github.com/go-chi/chi/v5 v5.0.7
-	github.com/go-pkgz/email v0.2.0
+	github.com/go-pkgz/email v0.2.1-0.20220428155644-a7e5d837d02f
 	github.com/go-pkgz/lgr v0.10.4
 	github.com/go-pkgz/repeater v1.1.3
 	github.com/microcosm-cc/bluemonday v1.0.18
