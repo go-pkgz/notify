@@ -4,13 +4,13 @@ go 1.17
 
 require (
 	github.com/go-chi/chi/v5 v5.0.7
-	github.com/go-pkgz/email v0.2.1-0.20220520194756-a930c28d0fc9
+	github.com/go-pkgz/email v0.3.0
 	github.com/go-pkgz/lgr v0.10.4
 	github.com/go-pkgz/repeater v1.1.3
 	github.com/microcosm-cc/bluemonday v1.0.18
 	github.com/slack-go/slack v0.10.3
 	github.com/stretchr/testify v1.7.1
-	golang.org/x/net v0.0.0-20220425223048-2871e0cb64e4
+	golang.org/x/net v0.0.0-20220520000938-2e3eb7b945c2
 )
 
 require (
