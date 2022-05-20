@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/mail"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/go-pkgz/email"
@@ -123,7 +124,12 @@ func (e *Email) parseDestination(destination string) (email.Params, error) {
 	}
 	destinations := []string{}
 	for _, addr := range addresses {
-		destinations = append(destinations, addr.String())
+		stringAddr := addr.String()
+		// in case of mailgun, correct RFC5322 address with <> yield 501 error, so we need to remove brackets
+		if strings.HasPrefix(stringAddr, "<") && strings.HasSuffix(stringAddr, ">") {
+			stringAddr = stringAddr[1 : len(stringAddr)-1]
+		}
+		destinations = append(destinations, stringAddr)
 	}
 
 	return email.Params{
