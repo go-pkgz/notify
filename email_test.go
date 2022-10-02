@@ -15,6 +15,7 @@ func TestEmailNew(t *testing.T) {
 		TLS:         true,
 		Username:    "test@username",
 		Password:    "test@password",
+		LoginAuth:   true,
 		ContentType: "text/html",
 		Charset:     "UTF-8",
 		TimeOut:     time.Second,
@@ -33,6 +34,7 @@ func TestEmailNew(t *testing.T) {
 	assert.Equal(t, smtpParams.TLS, email.TLS, "SMTPParams.TLS unchanged after creation")
 	assert.Equal(t, smtpParams.ContentType, email.ContentType, "SMTPParams.ContentType unchanged after creation")
 	assert.Equal(t, smtpParams.Charset, email.Charset, "SMTPParams.Charset unchanged after creation")
+	assert.Equal(t, smtpParams.LoginAuth, email.LoginAuth, "SMTPParams.LoginAuth unchanged after creation")
 }
 
 func TestEmailSendClientError(t *testing.T) {
