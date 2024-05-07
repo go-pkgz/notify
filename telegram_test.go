@@ -307,7 +307,7 @@ func TestTelegram_GetUpdatesFlow(t *testing.T) {
 }
 
 func TestTelegram_ProcessUpdateFlow(t *testing.T) {
-	ts := mockTelegramServer(func(w http.ResponseWriter, r *http.Request) {
+	ts := mockTelegramServer(func(w http.ResponseWriter, _ *http.Request) {
 		// respond normally to processUpdates attempt to send message back to user
 		_, _ = w.Write([]byte("{}"))
 	})
@@ -378,7 +378,7 @@ func TestTelegram_SendText(t *testing.T) {
 const errorResp = `{"ok":false,"error_code":400,"description":"Very bad request"}`
 
 func TestTelegram_Error(t *testing.T) {
-	ts := mockTelegramServer(func(w http.ResponseWriter, r *http.Request) {
+	ts := mockTelegramServer(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(errorResp))
 	})
@@ -493,20 +493,20 @@ func mockTelegramServer(h http.HandlerFunc) *httptest.Server {
 		}))
 	}
 	router := chi.NewRouter()
-	router.Get("/good-token/getMe", func(w http.ResponseWriter, r *http.Request) {
+	router.Get("/good-token/getMe", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(getMeResp))
 	})
-	router.Get("/empty-json/getMe", func(w http.ResponseWriter, r *http.Request) {
+	router.Get("/empty-json/getMe", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{}`))
 	})
-	router.Get("/non-json-resp/getMe", func(w http.ResponseWriter, r *http.Request) {
+	router.Get("/non-json-resp/getMe", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`not-a-json`))
 	})
-	router.Get("/404/getMe", func(w http.ResponseWriter, r *http.Request) {
+	router.Get("/404/getMe", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(404)
 	})
 
-	router.Post("/good-token/sendMessage", func(w http.ResponseWriter, r *http.Request) {
+	router.Post("/good-token/sendMessage", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"ok": true}`))
 	})
 

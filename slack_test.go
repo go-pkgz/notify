@@ -79,7 +79,7 @@ func (ts *mockSlackServer) newClient() *Slack {
 func newMockSlackServer() *mockSlackServer {
 	mockServer := mockSlackServer{}
 	router := chi.NewRouter()
-	router.Post("/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+	router.Post("/conversations.list", func(w http.ResponseWriter, _ *http.Request) {
 		if mockServer.listingIsBroken {
 			w.WriteHeader(500)
 		} else {
@@ -120,7 +120,7 @@ func newMockSlackServer() *mockSlackServer {
 		}
 	})
 
-	router.Post("/chat.postMessage", func(w http.ResponseWriter, r *http.Request) {
+	router.Post("/chat.postMessage", func(w http.ResponseWriter, _ *http.Request) {
 		if mockServer.isServerDown {
 			w.WriteHeader(500)
 		} else {
@@ -141,7 +141,7 @@ func newMockSlackServer() *mockSlackServer {
 		}
 	})
 
-	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
+	router.NotFound(func(_ http.ResponseWriter, r *http.Request) {
 		log.Printf("..... 404 for %s .....\n", r.URL)
 	})
 
