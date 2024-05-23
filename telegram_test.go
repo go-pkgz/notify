@@ -119,7 +119,7 @@ func TestTelegram_Formatting(t *testing.T) {
 </blockquote>
 <p>And <strong>bold</strong>, <em>italics</em>, and even <em>italics and later <strong>bold</strong></em>. Even <del>strikethrough</del>. <a href="https://markdowntohtml.com">A link</a> to somewhere.</p>
 <p>And code highlighting:</p>
-<pre><code class="lang-js"><span class="hljs-keyword">var</span> foo = <span class="hljs-string">'bar'</span>;
+<pre language="c++"><code class="lang-js"><span class="hljs-keyword">var</span> foo = <span class="hljs-string">'bar'</span>;
 
 <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">baz</span><span class="hljs-params">(s)</span> </span>{
    <span class="hljs-keyword">return</span> foo + <span class="hljs-string">':'</span> + s;
@@ -143,12 +143,12 @@ Three
 
 More
 
-
+<blockquote>
 Blockquote
-
+</blockquote>
 And <strong>bold</strong>, <em>italics</em>, and even <em>italics and later <strong>bold</strong></em>. Even <del>strikethrough</del>. <a href="https://markdowntohtml.com">A link</a> to somewhere.
 And code highlighting:
-<pre><code class="lang-js">var foo = &#39;bar&#39;;
+<pre language="c++"><code class="lang-js">var foo = &#39;bar&#39;;
 
 function baz(s) {
    return foo + &#39;:&#39; + s;
@@ -161,6 +161,23 @@ Or an image of bears
 The end ...`
 
 	assert.Equal(t, cleanText, TelegramSupportedHTML(text))
+
+	// taken from https://core.telegram.org/bots/api#html-style
+	// `<tg-spoiler>spoiler</tg-spoiler>` for some reason doesn't work as expected, tag is stripped by bluemonday
+	// also, there is no way to allow <span class="tg-spoiler"> but not empty spans
+	telegramExampleTest := `<b>bold</b>, <strong>bold</strong>
+<i>italic</i>, <em>italic</em>
+<u>underline</u>, <ins>underline</ins>
+<s>strikethrough</s>, <strike>strikethrough</strike>, <del>strikethrough</del>
+<b>bold <i>italic bold <s>italic bold strikethrough italic bold strikethrough</s> <u>underline italic bold</u></i> bold</b>
+<a href="http://www.example.com/">inline URL</a>
+<a href="tg://user?id=123456789">inline mention of a user</a>
+<tg-emoji emoji-id="5368324170671202286">👍</tg-emoji>
+<code>inline fixed-width code</code>
+<pre>pre-formatted fixed-width code block</pre>
+<pre><code class="language-python">pre-formatted fixed-width code block written in the Python programming language</code></pre>
+<blockquote>Block quotation started\nBlock quotation continued\nThe last line of the block quotation</blockquote>`
+	assert.Equal(t, telegramExampleTest, TelegramSupportedHTML(telegramExampleTest))
 
 	username := "test<user>"
 	cleanUsername := "test&lt;user&gt;"
