@@ -8,7 +8,7 @@ require (
 	github.com/go-pkgz/lgr v0.11.1
 	github.com/go-pkgz/repeater v1.1.3
 	github.com/microcosm-cc/bluemonday v1.0.26
-	github.com/slack-go/slack v0.12.5
+	github.com/slack-go/slack v0.13.0
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/net v0.25.0
 )
