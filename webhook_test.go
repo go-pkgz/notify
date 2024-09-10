@@ -82,6 +82,15 @@ func TestWebhook_Send(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "non-OK status code: 404")
 	assert.NotContains(t, err.Error(), "body")
+
+	wh.webhookClient = funcWebhookClient(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusNoContent,
+			Body:       io.NopCloser(errReader{}),
+		}, nil
+	})
+	err = wh.Send(context.Background(), "http:/example.org/no-content-url", "")
+	assert.NoError(t, err)
 }
 
 func TestWebhook_String(t *testing.T) {

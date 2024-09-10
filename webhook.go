@@ -69,7 +69,7 @@ func (wh *Webhook) Send(ctx context.Context, destination, text string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errMsg := fmt.Sprintf("webhook request failed with non-OK status code: %d", resp.StatusCode)
 		respBody, e := io.ReadAll(resp.Body)
 		if e != nil {
