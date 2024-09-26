@@ -19,13 +19,6 @@ func (c funcWebhookClient) Do(r *http.Request) (*http.Response, error) {
 	return c(r)
 }
 
-var okWebhookClient = funcWebhookClient(func(*http.Request) (*http.Response, error) {
-	return &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(bytes.NewBufferString("ok")),
-	}, nil
-})
-
 type errReader struct {
 }
 
