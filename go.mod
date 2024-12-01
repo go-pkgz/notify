@@ -6,11 +6,11 @@ require (
 	github.com/go-chi/chi/v5 v5.1.0
 	github.com/go-pkgz/email v0.5.0
 	github.com/go-pkgz/lgr v0.11.1
-	github.com/go-pkgz/repeater v1.1.3
+	github.com/go-pkgz/repeater v1.2.0
 	github.com/microcosm-cc/bluemonday v1.0.27
-	github.com/slack-go/slack v0.14.0
-	github.com/stretchr/testify v1.9.0
-	golang.org/x/net v0.29.0
+	github.com/slack-go/slack v0.15.0
+	github.com/stretchr/testify v1.10.0
+	golang.org/x/net v0.31.0
 )
 
 require (
