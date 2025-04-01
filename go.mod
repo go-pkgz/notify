@@ -2,6 +2,8 @@ module github.com/go-pkgz/notify
 
 go 1.23.0
 
+toolchain go1.24.1
+
 require (
 	github.com/go-chi/chi/v5 v5.2.1
 	github.com/go-pkgz/email v0.5.0
@@ -10,7 +12,7 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/slack-go/slack v0.16.0
 	github.com/stretchr/testify v1.10.0
-	golang.org/x/net v0.37.0
+	golang.org/x/net v0.38.0
 )
 
 require (
