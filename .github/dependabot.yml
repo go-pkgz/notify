@@ -21,5 +21,3 @@ updates:
       "Go modules updates":
         dependency-type: "production"
         applies-to: "security-updates"
-        patterns:
-          - "*"
