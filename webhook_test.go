@@ -60,7 +60,7 @@ func TestWebhook_Send(t *testing.T) {
 	t.Run("OK with JSON response", func(t *testing.T) {
 		wh.webhookClient = funcWebhookClient(func(r *http.Request) (*http.Response, error) {
 			assert.Len(t, r.Header, 1)
-			assert.Equal(t, r.Header.Get("Content-Type"), "application/json,text/plain")
+			assert.Equal(t, "application/json,text/plain", r.Header.Get("Content-Type"))
 
 			return &http.Response{
 				StatusCode: http.StatusOK,

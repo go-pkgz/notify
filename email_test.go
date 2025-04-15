@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEmailNew(t *testing.T) {
@@ -43,19 +44,19 @@ func TestEmailSendClientError(t *testing.T) {
 	assert.Equal(t, "email: with username 'user' at server test@host:0 with TLS", email.String())
 
 	// no destination set
-	assert.EqualError(t, email.Send(context.Background(), "", ""),
+	require.EqualError(t, email.Send(context.Background(), "", ""),
 		"problem parsing destination: unsupported scheme , should be mailto")
 
 	// wrong scheme
-	assert.EqualError(t, email.Send(context.Background(), "https://example.org", ""),
+	require.EqualError(t, email.Send(context.Background(), "https://example.org", ""),
 		"problem parsing destination: unsupported scheme https, should be mailto")
 
 	// bad destination set
-	assert.EqualError(t, email.Send(context.Background(), "%", ""),
+	require.EqualError(t, email.Send(context.Background(), "%", ""),
 		`problem parsing destination: parse "%": invalid URL escape "%"`)
 
 	// bad recipient
-	assert.EqualError(t, email.Send(context.Background(), "mailto:bad", ""),
+	require.EqualError(t, email.Send(context.Background(), "mailto:bad", ""),
 		`problem parsing destination: problem parsing email recipients: mail: missing '@' or angle-addr`)
 
 	// unable to find host, with advanced destination parsing test

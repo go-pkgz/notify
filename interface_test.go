@@ -5,21 +5,22 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSend(t *testing.T) {
 	notifiers := []Notifier{NewWebhook(WebhookParams{})}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	assert.EqualError(t,
+	require.EqualError(t,
 		Send(ctx, notifiers, "mailto:addr@example.org", ""),
 		"unsupported destination schema: mailto")
-	assert.EqualError(t,
+	require.EqualError(t,
 		Send(ctx, notifiers, "bad destination", ""),
 		"unsupported destination schema: bad destination")
 
 	cancel()
-	assert.EqualError(t,
+	require.EqualError(t,
 		Send(ctx, notifiers, "https://example.org/webhook", ""),
 		`webhook request failed: Post "https://example.org/webhook": context canceled`)
 }
