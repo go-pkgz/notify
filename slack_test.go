@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/slack-go/slack"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSlack_Send(t *testing.T) {
@@ -22,7 +23,7 @@ func TestSlack_Send(t *testing.T) {
 	assert.Equal(t, "slack", tb.Schema())
 
 	err := tb.Send(context.Background(), "slack:general?title=title&attachmentText=test%20text&titleLink=https://example.org", "test text")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	ts.isServerDown = true
 	err = tb.Send(context.Background(), "slack:general?title=title&attachmentText=test%20text&titleLink=https://example.org", "test text")
@@ -38,32 +39,32 @@ func TestSlackSendClientError(t *testing.T) {
 	assert.Equal(t, "slack notifications destination", slck.String())
 
 	// no destination set
-	assert.EqualError(t, slck.Send(context.Background(), "", ""),
+	require.EqualError(t, slck.Send(context.Background(), "", ""),
 		"problem parsing destination: unsupported scheme , should be slack")
 
 	// wrong scheme
-	assert.EqualError(t, slck.Send(context.Background(), "https://example.org", ""),
+	require.EqualError(t, slck.Send(context.Background(), "https://example.org", ""),
 		"problem parsing destination: unsupported scheme https, should be slack")
 
 	// bad destination set
-	assert.EqualError(t, slck.Send(context.Background(), "%", ""),
+	require.EqualError(t, slck.Send(context.Background(), "%", ""),
 		`problem parsing destination: parse "%": invalid URL escape "%"`)
 
 	// can't retrieve channel ID
 	ts.listingIsBroken = true
-	assert.EqualError(t, slck.Send(context.Background(), "slack:general", ""),
+	require.EqualError(t, slck.Send(context.Background(), "slack:general", ""),
 		"problem parsing destination: problem retrieving channel ID for #general:"+
 			" slack server error: 500 Internal Server Error")
 	ts.listingIsBroken = false
 
 	// non-existing channel
-	assert.EqualError(t, slck.Send(context.Background(), "slack:non-existent", ""),
+	require.EqualError(t, slck.Send(context.Background(), "slack:non-existent", ""),
 		"problem parsing destination: problem retrieving channel ID for #non-existent: no such channel")
 
 	// canceled context
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	assert.EqualError(t, slck.Send(ctx, "slack:general?title=test", ""), "context canceled")
+	require.EqualError(t, slck.Send(ctx, "slack:general?title=test", ""), "context canceled")
 }
 
 type mockSlackServer struct {

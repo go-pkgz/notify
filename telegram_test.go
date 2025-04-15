@@ -21,9 +21,9 @@ func TestTelegram_New(t *testing.T) {
 		Token:     "good-token",
 		apiPrefix: ts.URL + "/",
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, tb)
-	assert.Equal(t, tb.Timeout, time.Second*5)
+	assert.Equal(t, time.Second*5, tb.Timeout)
 	assert.Equal(t, "telegram", tb.Schema())
 	assert.Equal(t, "telegram notifications destination", tb.String())
 
@@ -31,7 +31,7 @@ func TestTelegram_New(t *testing.T) {
 		Token:     "empty-json",
 		apiPrefix: ts.URL + "/",
 	})
-	assert.EqualError(t, err, "can't retrieve bot info from Telegram API: received empty result")
+	require.EqualError(t, err, "can't retrieve bot info from Telegram API: received empty result")
 
 	st := time.Now()
 	_, err = NewTelegram(TelegramParams{
@@ -39,16 +39,16 @@ func TestTelegram_New(t *testing.T) {
 		Timeout:   2 * time.Second,
 		apiPrefix: ts.URL + "/",
 	})
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decode json response:")
-	assert.True(t, time.Since(st) >= 250*3*time.Millisecond)
+	assert.GreaterOrEqual(t, time.Since(st), 250*3*time.Millisecond)
 
 	_, err = NewTelegram(TelegramParams{
 		Token:     "404",
 		Timeout:   2 * time.Second,
 		apiPrefix: ts.URL + "/",
 	})
-	assert.EqualError(t, err, "can't retrieve bot info from Telegram API: unexpected telegram API status code 404")
+	require.EqualError(t, err, "can't retrieve bot info from Telegram API: unexpected telegram API status code 404")
 
 	_, err = NewTelegram(TelegramParams{
 		Token:     "no-such-thing",
@@ -62,14 +62,14 @@ func TestTelegram_New(t *testing.T) {
 		Token:     "",
 		apiPrefix: "",
 	})
-	assert.Error(t, err, "empty api url not allowed")
+	require.Error(t, err, "empty api url not allowed")
 
 	_, err = NewTelegram(TelegramParams{
 		Token:     "good-token",
 		Timeout:   2 * time.Second,
 		apiPrefix: ts.URL + "/",
 	})
-	assert.NoError(t, err, "0 timeout allowed as default")
+	require.NoError(t, err, "0 timeout allowed as default")
 }
 
 func TestTelegram_Send(t *testing.T) {
@@ -80,11 +80,11 @@ func TestTelegram_Send(t *testing.T) {
 		Token:     "good-token",
 		apiPrefix: ts.URL + "/",
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, tb)
 
 	err = tb.Send(context.Background(), "telegram:test_user_channel?parseMode=HTML", "test message")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	tb = &Telegram{
 		TelegramParams: TelegramParams{
@@ -98,7 +98,7 @@ func TestTelegram_Send(t *testing.T) {
 	// bad API URL
 	tb.apiPrefix = "http://non-existent"
 	err = tb.Send(context.Background(), "telegram:test_user_channel", "test message")
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestTelegram_Formatting(t *testing.T) {
@@ -192,25 +192,25 @@ func TestTelegramSendClientError(t *testing.T) {
 		Token:     "good-token",
 		apiPrefix: ts.URL + "/",
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, tg)
 
 	// no destination set
-	assert.EqualError(t, tg.Send(context.Background(), "", ""),
+	require.EqualError(t, tg.Send(context.Background(), "", ""),
 		"problem parsing destination: unsupported scheme , should be telegram")
 
 	// wrong scheme
-	assert.EqualError(t, tg.Send(context.Background(), "https://example.org", ""),
+	require.EqualError(t, tg.Send(context.Background(), "https://example.org", ""),
 		"problem parsing destination: unsupported scheme https, should be telegram")
 
 	// bad destination set
-	assert.EqualError(t, tg.Send(context.Background(), "%", ""),
+	require.EqualError(t, tg.Send(context.Background(), "%", ""),
 		`problem parsing destination: parse "%": invalid URL escape "%"`)
 
 	// canceled context
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	assert.EqualError(t, tg.Send(ctx, "telegram:general?title=test", ""), "context canceled")
+	require.EqualError(t, tg.Send(ctx, "telegram:general?title=test", ""), "context canceled")
 }
 
 func TestTelegram_GetBotUsername(t *testing.T) {
@@ -221,7 +221,7 @@ func TestTelegram_GetBotUsername(t *testing.T) {
 		Token:     "good-token",
 		apiPrefix: ts.URL + "/",
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, tb)
 	assert.Equal(t, "remark42_test_bot", tb.GetBotUsername())
 }
@@ -287,7 +287,7 @@ func TestTelegram_GetUpdatesFlow(t *testing.T) {
 		}
 		// responses to get updates calls to API
 		if first {
-			assert.Equal(t, "", r.URL.Query().Get("offset"))
+			assert.Empty(t, r.URL.Query().Get("offset"))
 			first = false
 		} else {
 			assert.Equal(t, "1001", r.URL.Query().Get("offset"))
@@ -299,11 +299,11 @@ func TestTelegram_GetUpdatesFlow(t *testing.T) {
 		Token:     "xxxsupersecretxxx",
 		apiPrefix: ts.URL + "/",
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// send request with no offset
 	upd, err := tb.getUpdates(context.Background())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Len(t, upd.Result, 3)
 	assert.Equal(t, 1001, tb.updateOffset)
@@ -311,16 +311,16 @@ func TestTelegram_GetUpdatesFlow(t *testing.T) {
 
 	tb.AddToken("token", "user", "site", time.Now().Add(time.Minute))
 	_, _, err = tb.CheckToken("token", "user")
-	assert.Error(t, err)
+	require.Error(t, err)
 	tb.processUpdates(context.Background(), upd)
 	tgID, site, err := tb.CheckToken("token", "user")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "313131313", tgID)
 	assert.Equal(t, "site", site)
 
 	// send request with offset
 	_, err = tb.getUpdates(context.Background())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestTelegram_ProcessUpdateFlow(t *testing.T) {
@@ -333,25 +333,25 @@ func TestTelegram_ProcessUpdateFlow(t *testing.T) {
 		Token:     "xxxsupersecretxxx",
 		apiPrefix: ts.URL + "/",
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	tb.AddToken("token", "user", "site", time.Now().Add(time.Minute))
 	tb.AddToken("expired token", "user", "site", time.Now().Add(-time.Minute))
 	assert.Len(t, tb.requests.data, 2)
 	_, _, err = tb.CheckToken("token", "user")
-	assert.Error(t, err)
-	assert.NoError(t, tb.ProcessUpdate(context.Background(), getUpdatesResp))
+	require.Error(t, err)
+	require.NoError(t, tb.ProcessUpdate(context.Background(), getUpdatesResp))
 	assert.Len(t, tb.requests.data, 1, "expired token was cleaned up")
 	tgID, site, err := tb.CheckToken("token", "user")
-	assert.NoError(t, err)
-	assert.Len(t, tb.requests.data, 0, "token is deleted after successful check")
+	require.NoError(t, err)
+	assert.Empty(t, tb.requests.data, "token is deleted after successful check")
 	assert.Equal(t, "313131313", tgID)
 	assert.Equal(t, "site", site)
 
 	tb.AddToken("expired token", "user", "site", time.Now().Add(-time.Minute))
 	assert.Len(t, tb.requests.data, 1)
-	assert.EqualError(t, tb.ProcessUpdate(context.Background(), ""), "failed to decode provided telegram update: unexpected end of JSON input")
-	assert.Len(t, tb.requests.data, 0, "expired token should be cleaned up despite the error")
+	require.EqualError(t, tb.ProcessUpdate(context.Background(), ""), "failed to decode provided telegram update: unexpected end of JSON input")
+	assert.Empty(t, tb.requests.data, "expired token should be cleaned up despite the error")
 }
 
 const sendMessageResp = `{
@@ -386,10 +386,10 @@ func TestTelegram_SendText(t *testing.T) {
 		Token:     "xxxsupersecretxxx",
 		apiPrefix: ts.URL + "/",
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	err = tb.sendText(context.Background(), 123, "hello there")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 const errorResp = `{"ok":false,"error_code":400,"description":"Very bad request"}`
@@ -404,10 +404,10 @@ func TestTelegram_Error(t *testing.T) {
 		Token:     "xxxsupersecretxxx",
 		apiPrefix: ts.URL + "/",
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	_, err = tb.getUpdates(context.Background())
-	assert.EqualError(t, err, "failed to fetch updates: unexpected telegram API status code 400, error: \"Very bad request\"")
+	require.EqualError(t, err, "failed to fetch updates: unexpected telegram API status code 400, error: \"Very bad request\"")
 }
 
 func TestTelegram_TokenVerification(t *testing.T) {
@@ -426,7 +426,7 @@ func TestTelegram_TokenVerification(t *testing.T) {
 		Token:     "good-token",
 		apiPrefix: ts.URL + "/",
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, tb)
 	tb.AddToken("token", "user", "site", time.Now().Add(time.Minute))
 	assert.Len(t, tb.requests.data, 1)
@@ -435,13 +435,13 @@ func TestTelegram_TokenVerification(t *testing.T) {
 	tgID, site, err := tb.CheckToken("unknown token", "user")
 	assert.Empty(t, tgID)
 	assert.Empty(t, site)
-	assert.EqualError(t, err, "request is not found")
+	require.EqualError(t, err, "request is not found")
 
 	// right token and user, not verified yet
 	tgID, site, err = tb.CheckToken("token", "user")
 	assert.Empty(t, tgID)
 	assert.Empty(t, site)
-	assert.EqualError(t, err, "request is not verified yet")
+	require.EqualError(t, err, "request is not verified yet")
 
 	// confirm request
 	authRequest, ok := tb.requests.data["token"]
@@ -454,11 +454,11 @@ func TestTelegram_TokenVerification(t *testing.T) {
 	tgID, site, err = tb.CheckToken("token", "wrong user")
 	assert.Empty(t, tgID)
 	assert.Empty(t, site)
-	assert.EqualError(t, err, "user does not match original requester")
+	require.EqualError(t, err, "user does not match original requester")
 
 	// successful check
 	tgID, site, err = tb.CheckToken("token", "user")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "telegramID", tgID)
 	assert.Equal(t, "site", site)
 
@@ -467,8 +467,8 @@ func TestTelegram_TokenVerification(t *testing.T) {
 	tgID, site, err = tb.CheckToken("expired token", "user")
 	assert.Empty(t, tgID)
 	assert.Empty(t, site)
-	assert.EqualError(t, err, "request expired")
-	assert.Len(t, tb.requests.data, 0)
+	require.EqualError(t, err, "request expired")
+	assert.Empty(t, tb.requests.data)
 
 	// expired token, cleaned up by the cleanup
 	tb.apiPollInterval = time.Millisecond * 15
@@ -484,7 +484,7 @@ func TestTelegram_TokenVerification(t *testing.T) {
 	tb.requests.RUnlock()
 	time.Sleep(tb.expiredCleanupInterval * 2)
 	tb.requests.RLock()
-	assert.Len(t, tb.requests.data, 0)
+	assert.Empty(t, tb.requests.data)
 	tb.requests.RUnlock()
 	cancel()
 	// give enough time for Run() to finish
