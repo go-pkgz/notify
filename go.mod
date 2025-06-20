@@ -3,7 +3,7 @@ module github.com/go-pkgz/notify
 go 1.23.0
 
 require (
-	github.com/go-chi/chi/v5 v5.2.1
+	github.com/go-chi/chi/v5 v5.2.2
 	github.com/go-pkgz/email v0.5.0
 	github.com/go-pkgz/lgr v0.12.0
 	github.com/go-pkgz/repeater v1.2.0
