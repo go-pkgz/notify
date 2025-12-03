@@ -2,12 +2,10 @@ package notify
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/slack-go/slack"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -79,8 +77,8 @@ func (ts *mockSlackServer) newClient() *Slack {
 
 func newMockSlackServer() *mockSlackServer {
 	mockServer := mockSlackServer{}
-	router := chi.NewRouter()
-	router.Post("/conversations.list", func(w http.ResponseWriter, _ *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /conversations.list", func(w http.ResponseWriter, _ *http.Request) {
 		if mockServer.listingIsBroken {
 			w.WriteHeader(500)
 		} else {
@@ -121,7 +119,7 @@ func newMockSlackServer() *mockSlackServer {
 		}
 	})
 
-	router.Post("/chat.postMessage", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST /chat.postMessage", func(w http.ResponseWriter, _ *http.Request) {
 		if mockServer.isServerDown {
 			w.WriteHeader(500)
 		} else {
@@ -142,10 +140,6 @@ func newMockSlackServer() *mockSlackServer {
 		}
 	})
 
-	router.NotFound(func(_ http.ResponseWriter, r *http.Request) {
-		log.Printf("..... 404 for %s .....\n", r.URL)
-	})
-
-	mockServer.Server = httptest.NewServer(router)
+	mockServer.Server = httptest.NewServer(mux)
 	return &mockServer
 }

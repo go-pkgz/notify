@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -509,23 +508,23 @@ func mockTelegramServer(h http.HandlerFunc) *httptest.Server {
 			h(w, r)
 		}))
 	}
-	router := chi.NewRouter()
-	router.Get("/good-token/getMe", func(w http.ResponseWriter, _ *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /good-token/getMe", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(getMeResp))
 	})
-	router.Get("/empty-json/getMe", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /empty-json/getMe", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{}`))
 	})
-	router.Get("/non-json-resp/getMe", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /non-json-resp/getMe", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`not-a-json`))
 	})
-	router.Get("/404/getMe", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /404/getMe", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(404)
 	})
 
-	router.Post("/good-token/sendMessage", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST /good-token/sendMessage", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"ok": true}`))
 	})
 
-	return httptest.NewServer(router)
+	return httptest.NewServer(mux)
 }
