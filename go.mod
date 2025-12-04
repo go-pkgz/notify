@@ -3,7 +3,7 @@ module github.com/go-pkgz/notify
 go 1.24.0
 
 require (
-	github.com/go-pkgz/email v0.5.0
+	github.com/go-pkgz/email v0.6.0
 	github.com/go-pkgz/lgr v0.12.1
 	github.com/go-pkgz/repeater v1.2.0
 	github.com/microcosm-cc/bluemonday v1.0.27
