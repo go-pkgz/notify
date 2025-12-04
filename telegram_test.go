@@ -40,7 +40,7 @@ func TestTelegram_New(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decode json response:")
-	assert.GreaterOrEqual(t, time.Since(st), 250*3*time.Millisecond)
+	assert.GreaterOrEqual(t, time.Since(st), 250*2*time.Millisecond)
 
 	_, err = NewTelegram(TelegramParams{
 		Token:     "404",

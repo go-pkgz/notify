@@ -16,7 +16,7 @@ import (
 	"time"
 
 	log "github.com/go-pkgz/lgr"
-	"github.com/go-pkgz/repeater"
+	"github.com/go-pkgz/repeater/v2"
 	"github.com/microcosm-cc/bluemonday"
 	"golang.org/x/net/html"
 )
@@ -34,8 +34,8 @@ type TelegramParams struct {
 type Telegram struct {
 	TelegramParams
 
-	// Identifier of the first update to be requested.
-	// Should be equal to LastSeenUpdateID + 1
+	// identifier of the first update to be requested.
+	// should be equal to LastSeenUpdateID + 1
 	// See https://core.telegram.org/bots/api#getupdates
 	updateOffset           int
 	apiPollInterval        time.Duration // interval to check updates from Telegram API and answer to users
@@ -247,7 +247,7 @@ func (t *Telegram) CheckToken(token, user string) (telegram, site string, err er
 		return "", "", errors.New("user does not match original requester")
 	}
 
-	// Delete request
+	// delete request
 	t.requests.Lock()
 	delete(t.requests.data, token)
 	t.requests.Unlock()
@@ -387,7 +387,7 @@ func (t *Telegram) processUpdates(ctx context.Context, updates *TelegramUpdate) 
 
 		t.requests.RLock()
 		authRequest, ok := t.requests.data[token]
-		if !ok { // No such token
+		if !ok { // no such token
 			t.requests.RUnlock()
 			if t.ErrorMsg != "" {
 				if err := t.sendText(ctx, update.Message.Chat.ID, t.ErrorMsg); err != nil {
@@ -436,7 +436,7 @@ func (t *Telegram) botInfo(ctx context.Context) (*TelegramBotInfo, error) {
 
 // Request makes a request to the Telegram API and return the result
 func (t *Telegram) Request(ctx context.Context, method string, b []byte, data any) error {
-	return repeater.NewDefault(3, time.Millisecond*250).Do(ctx, func() error {
+	return repeater.NewFixed(3, time.Millisecond*250).Do(ctx, func() error {
 		url := fmt.Sprintf("%s%s/%s", t.apiPrefix, t.Token, method)
 
 		var req *http.Request

@@ -16,10 +16,10 @@ type SMTPParams struct {
 	Host               string        // SMTP host
 	Port               int           // SMTP port
 	TLS                bool          // TLS auth
-	StartTLS           bool          // StartTLS auth
+	StartTLS           bool          // startTLS auth
 	InsecureSkipVerify bool          // skip certificate verification
-	ContentType        string        // Content type
-	Charset            string        // Character set
+	ContentType        string        // content type
+	Charset            string        // character set
 	LoginAuth          bool          // LOGIN auth method instead of default PLAIN, needed for Office 365 and outlook.com
 	Username           string        // username
 	Password           string        // password
