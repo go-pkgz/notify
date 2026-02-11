@@ -49,6 +49,8 @@ func main() {
 
 `mailto:` [scheme](https://datatracker.ietf.org/doc/html/rfc6068) is supported. Only `subject` and `from` query params are used.
 
+**Note:** Query parameter values must be URL-encoded. In particular, email addresses containing `+` (e.g. `noreply+tag@example.com`) must use `%2B`, otherwise `+` is interpreted as a space. Use `url.QueryEscape` for all parameter values.
+
 Examples:
 
 - `mailto:"John Wayne"<john@example.org>?subject=test-subj&from="Notifier"<notify@example.org>`

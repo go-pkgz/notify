@@ -81,6 +81,10 @@ func NewEmail(smtpParams SMTPParams) *Email {
 // with "mailto:" schema.
 // "unsubscribeLink" passed as a header, https://support.google.com/mail/answer/81126 -> "Use one-click unsubscribe"
 //
+// Note: query parameter values in the mailto URL must be properly URL-encoded. In particular, email addresses
+// containing "+" (e.g. "noreply+tag@example.com") must use "%2B" instead, otherwise "+" is interpreted as a space
+// per standard URL query string parsing. Use url.QueryEscape for all parameter values.
+//
 // Example:
 //
 // - mailto:"John Wayne"<john@example.org>?subject=test-subj&from="Notifier"<notify@example.org>
