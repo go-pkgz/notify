@@ -33,7 +33,7 @@ func TestTelegram_New(t *testing.T) {
 	require.EqualError(t, err, "can't retrieve bot info from Telegram API: received empty result")
 
 	st := time.Now()
-	_, err = NewTelegram(TelegramParams{
+	_, err = NewTelegram(TelegramParams{ //nolint:gosec // G101: test fixture token, not a real credential
 		Token:     "non-json-resp",
 		Timeout:   2 * time.Second,
 		apiPrefix: ts.URL + "/",
@@ -86,7 +86,7 @@ func TestTelegram_Send(t *testing.T) {
 	require.NoError(t, err)
 
 	tb = &Telegram{
-		TelegramParams: TelegramParams{
+		TelegramParams: TelegramParams{ //nolint:gosec // G101: test fixture token, not a real credential
 			Token:     "non-json-resp",
 			apiPrefix: ts.URL + "/",
 		}}
