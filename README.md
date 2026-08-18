@@ -74,6 +74,7 @@ func main() {
 		Host:        "localhost", // the only required field, others are optional
 		Port:        25,
 		TLS:         false, // TLS, but not STARTTLS
+		HELOHost:    "mail.example.org", // hostname sent in the SMTP greeting, "localhost" by default
 		ContentType: "text/html",
 		Charset:     "UTF-8",
 		Username:    "username",

@@ -14,6 +14,7 @@ func TestEmailNew(t *testing.T) {
 		Host:        "test@host",
 		Port:        1000,
 		TLS:         true,
+		HELOHost:    "helo.example.org",
 		Username:    "test@username",
 		Password:    "test@password",
 		LoginAuth:   true,
@@ -36,6 +37,14 @@ func TestEmailNew(t *testing.T) {
 	assert.Equal(t, smtpParams.ContentType, email.ContentType, "SMTPParams.ContentType unchanged after creation")
 	assert.Equal(t, smtpParams.Charset, email.Charset, "SMTPParams.Charset unchanged after creation")
 	assert.Equal(t, smtpParams.LoginAuth, email.LoginAuth, "SMTPParams.LoginAuth unchanged after creation")
+	assert.Equal(t, smtpParams.HELOHost, email.HELOHost, "SMTPParams.HELOHost unchanged after creation")
+	// sender reports the greeting hostname it will use, so this asserts the option reached it
+	assert.Contains(t, email.sender.String(), `helo:"helo.example.org"`)
+}
+
+func TestEmailDefaultHELOHost(t *testing.T) {
+	email := NewEmail(SMTPParams{Host: "test@host"})
+	assert.Contains(t, email.sender.String(), `helo:"localhost"`, "greeting hostname is unchanged without HELOHost set")
 }
 
 func TestEmailSendClientError(t *testing.T) {
