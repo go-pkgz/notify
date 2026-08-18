@@ -2,12 +2,15 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -560,16 +563,141 @@ func TestTelegram_TokenVerification(t *testing.T) {
 		return tb.ProcessUpdate(ctx, "").Error() == "the Run goroutine should not be used with ProcessUpdate"
 	}, time.Millisecond*100, time.Millisecond*10, "ProcessUpdate should not work same time as Run")
 	tb.AddToken("expired token", "user", "site", time.Now().Add(-time.Minute))
-	tb.requests.RLock()
+	tb.requests.Lock()
 	assert.Len(t, tb.requests.data, 1)
-	tb.requests.RUnlock()
+	tb.requests.Unlock()
 	time.Sleep(tb.expiredCleanupInterval * 2)
-	tb.requests.RLock()
+	tb.requests.Lock()
 	assert.Empty(t, tb.requests.data)
-	tb.requests.RUnlock()
+	tb.requests.Unlock()
 	cancel()
 	// give enough time for Run() to finish
 	time.Sleep(tb.expiredCleanupInterval)
+}
+
+func TestTelegram_CheckTokenIsSingleUse(t *testing.T) {
+	ts := mockTelegramServer(nil)
+	defer ts.Close()
+	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
+	require.NoError(t, err)
+
+	for i := 0; i < 50; i++ {
+		token := fmt.Sprintf("token-%d", i)
+		tb.AddToken(token, "user", "site", time.Now().Add(time.Minute))
+		tb.requests.Lock()
+		authRequest := tb.requests.data[token]
+		authRequest.confirmed = true
+		authRequest.telegramID = "telegramID"
+		tb.requests.data[token] = authRequest
+		tb.requests.Unlock()
+
+		var successes int32
+		var wg sync.WaitGroup
+		for j := 0; j < 10; j++ {
+			wg.Go(func() {
+				if _, _, e := tb.CheckToken(token, "user"); e == nil {
+					atomic.AddInt32(&successes, 1)
+				}
+			})
+		}
+		wg.Wait()
+		require.Equal(t, int32(1), atomic.LoadInt32(&successes), "one-time token should be accepted exactly once")
+	}
+	assert.Empty(t, tb.requests.data)
+}
+
+func TestTelegram_ConcurrentConfirmAndCheck(t *testing.T) {
+	ts := mockTelegramServer(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	})
+	defer ts.Close()
+	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
+	require.NoError(t, err)
+
+	for i := 0; i < 30; i++ {
+		token := fmt.Sprintf("token-%d", i)
+		tb.AddToken(token, "user", "site", time.Now().Add(time.Minute))
+
+		var upd TelegramUpdate
+		raw := fmt.Sprintf(`{"result":[{"update_id":%d,"message":{"chat":{"id":313131313,"type":"private"},"text":"/start %s"}}]}`, i, token)
+		require.NoError(t, json.Unmarshal([]byte(raw), &upd))
+
+		var successes int32
+		var wg, updates sync.WaitGroup
+		// the same update delivered twice, as it happens with duplicate update receivers
+		for j := 0; j < 2; j++ {
+			updates.Go(func() {
+				tb.processUpdates(context.Background(), &upd)
+			})
+		}
+		updatesDone := make(chan struct{})
+		wg.Go(func() {
+			updates.Wait()
+			close(updatesDone)
+		})
+		wg.Go(func() {
+			for {
+				select {
+				case <-updatesDone:
+					// last check with both updates processed, so the request is confirmed unless already used
+					if _, _, e := tb.CheckToken(token, "user"); e == nil {
+						atomic.AddInt32(&successes, 1)
+					}
+					return
+				default:
+					if _, _, e := tb.CheckToken(token, "user"); e == nil {
+						atomic.AddInt32(&successes, 1)
+					}
+				}
+			}
+		})
+		wg.Wait()
+
+		require.Equal(t, int32(1), atomic.LoadInt32(&successes), "confirmed request is used once and never restored after that")
+	}
+}
+
+func TestTelegram_RunSingleInstance(t *testing.T) {
+	ts := mockTelegramServer(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"result":[]}`))
+	})
+	defer ts.Close()
+	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
+	require.NoError(t, err)
+	tb.apiPollInterval = time.Millisecond * 10
+	tb.expiredCleanupInterval = time.Millisecond * 10
+
+	ctx, cancel := context.WithCancel(context.Background())
+	first := make(chan struct{})
+	go func() {
+		tb.Run(ctx)
+		close(first)
+	}()
+	require.Eventually(t, func() bool {
+		err = tb.ProcessUpdate(ctx, `{"result":[]}`)
+		return err != nil && strings.Contains(err.Error(), "should not be used with ProcessUpdate")
+	}, time.Second, time.Millisecond*10, "Run should be marked as running")
+
+	second := make(chan struct{})
+	go func() {
+		tb.Run(ctx)
+		close(second)
+	}()
+	select {
+	case <-second:
+	case <-time.After(time.Second):
+		t.Fatal("second Run call should return instead of starting another updates processor")
+	}
+
+	cancel()
+	select {
+	case <-first:
+	case <-time.After(time.Second):
+		t.Fatal("Run should return on context cancellation")
+	}
+
+	// with Run stopped, ProcessUpdate is allowed again
+	require.NoError(t, tb.ProcessUpdate(context.Background(), `{"result":[]}`))
 }
 
 const getMeResp = `{"ok": true,
