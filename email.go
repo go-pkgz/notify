@@ -16,6 +16,7 @@ type SMTPParams struct {
 	Host               string        // SMTP host
 	Port               int           // SMTP port
 	TLS                bool          // TLS auth
+	HELOHost           string        // SMTP HELO/EHLO hostname
 	StartTLS           bool          // startTLS auth
 	InsecureSkipVerify bool          // skip certificate verification
 	ContentType        string        // content type
@@ -54,6 +55,10 @@ func NewEmail(smtpParams SMTPParams) *Email {
 
 	if smtpParams.Port != 0 {
 		opts = append(opts, email.Port(smtpParams.Port))
+	}
+
+	if smtpParams.HELOHost != "" {
+		opts = append(opts, email.HELOHost(smtpParams.HELOHost))
 	}
 
 	if smtpParams.TimeOut != 0 {
