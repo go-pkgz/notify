@@ -40,10 +40,12 @@ func main() {
 	}
 	err = notify.Send(context.Background(), notifiers, "https://example.com/webhook", "Hello, world!")
 	if err != nil {
-		fmt.Printf("Sent message error: %s", err))
+		fmt.Printf("Sent message error: %s", err)
 	}
 }
 ```
+
+A runnable version of the same flow, sending to a local test server instead of a real webhook, is in [`example_test.go`](example_test.go).
 
 ### Email
 
