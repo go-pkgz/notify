@@ -6,7 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -120,9 +124,69 @@ func TestWebhook_Send(t *testing.T) {
 }
 
 func TestWebhook_String(t *testing.T) {
-	wh := NewWebhook(WebhookParams{Headers: []string{"Content-Type:application/json,text/plain"}})
+	wh := NewWebhook(WebhookParams{})
+	assert.NotNil(t, wh)
+	assert.Equal(t, "webhook notification with timeout 5s", wh.String())
+
+	wh = NewWebhook(WebhookParams{Headers: []string{"Content-Type:application/json,text/plain", "Authorization:Bearer secret-token"}})
 	assert.NotNil(t, wh)
 
 	str := wh.String()
-	assert.Equal(t, "webhook notification with timeout 5s and headers [Content-Type:application/json,text/plain]", str)
+	assert.Equal(t, "webhook notification with timeout 5s and 2 headers", str)
+	assert.NotContains(t, str, "secret-token", "header values might contain secrets and should not be printed")
+}
+
+func TestWebhook_SendHeaderWithColons(t *testing.T) {
+	wh := NewWebhook(WebhookParams{Headers: []string{
+		"Authorization:Bearer user:password",
+		"X-Callback: https://example.org/callback",
+		"X-No-Value",
+	}})
+	require.NotNil(t, wh)
+
+	wh.webhookClient = funcWebhookClient(func(r *http.Request) (*http.Response, error) {
+		assert.Equal(t, "Bearer user:password", r.Header.Get("Authorization"))
+		assert.Equal(t, "https://example.org/callback", r.Header.Get("X-Callback"))
+		assert.Len(t, r.Header, 2, "header without a value is skipped")
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(""))}, nil
+	})
+	require.NoError(t, wh.Send(context.Background(), "https://example.org/webhook", "some_text"))
+}
+
+func TestWebhook_SendLimitsErrorBody(t *testing.T) {
+	wh := NewWebhook(WebhookParams{})
+	require.NotNil(t, wh)
+
+	body := strings.Repeat("a", webhookErrBodyLimit*2)
+	wh.webhookClient = funcWebhookClient(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusInternalServerError, Body: io.NopCloser(bytes.NewBufferString(body))}, nil
+	})
+
+	err := wh.Send(context.Background(), "https://example.org/webhook", "some_text")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "non-OK status code: 500")
+	assert.Contains(t, err.Error(), "(truncated)")
+	assert.Less(t, len(err.Error()), webhookErrBodyLimit+200, "error message is capped")
+}
+
+func TestWebhook_SendReusesConnection(t *testing.T) {
+	var newConns int32
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("b", 1024)))
+	}))
+	ts.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			atomic.AddInt32(&newConns, 1)
+		}
+	}
+	ts.Start()
+	defer ts.Close()
+
+	wh := NewWebhook(WebhookParams{})
+	require.NotNil(t, wh)
+
+	for range 3 {
+		require.NoError(t, wh.Send(context.Background(), ts.URL, "some_text"))
+	}
+	assert.Equal(t, int32(1), atomic.LoadInt32(&newConns), "response body is drained, so the connection is reused")
 }
