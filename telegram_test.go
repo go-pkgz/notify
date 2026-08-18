@@ -2,9 +2,13 @@ package notify
 
 import (
 	"context"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -375,9 +379,10 @@ const sendMessageResp = `{
 }`
 
 func TestTelegram_SendText(t *testing.T) {
+	var expectedText string
 	ts := mockTelegramServer(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "123", r.URL.Query().Get("chat_id"))
-		assert.Equal(t, "hello there", r.URL.Query().Get("text"))
+		assert.Equal(t, expectedText, r.URL.Query().Get("text"))
 		_, _ = w.Write([]byte(sendMessageResp))
 	})
 	defer ts.Close()
@@ -387,8 +392,85 @@ func TestTelegram_SendText(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = tb.sendText(context.Background(), 123, "hello there")
+	messages := []string{"hello there", "C++ & R&D = fun", "100% sure?", "a+b=c"}
+	for _, msg := range messages {
+		t.Run(msg, func(t *testing.T) {
+			expectedText = msg
+			require.NoError(t, tb.sendText(context.Background(), 123, msg))
+		})
+	}
+}
+
+func TestTelegram_RequestDoesNotLeakToken(t *testing.T) {
+	const token = "xxxsupersecretxxx"
+	ts := mockTelegramServer(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(getMeResp))
+	})
+	tb, err := NewTelegram(TelegramParams{Token: token, apiPrefix: ts.URL + "/"})
 	require.NoError(t, err)
+
+	t.Run("connection error", func(t *testing.T) {
+		ts.Close() // no server on that address anymore
+		err = tb.Request(context.Background(), "getUpdates", nil, &struct{}{})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), token)
+		assert.Contains(t, err.Error(), "<redacted>")
+		assert.Contains(t, err.Error(), "connection refused", "cause of the error is preserved")
+	})
+
+	t.Run("timeout error", func(t *testing.T) {
+		slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			time.Sleep(time.Second)
+			_, _ = w.Write([]byte(getMeResp))
+		}))
+		defer slow.Close()
+		tbSlow := &Telegram{TelegramParams: TelegramParams{Token: token, Timeout: time.Millisecond, apiPrefix: slow.URL + "/"}}
+		err = tbSlow.Request(context.Background(), "getUpdates", nil, &struct{}{})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), token)
+
+		var urlErr *neturl.Error
+		require.ErrorAs(t, err, &urlErr, "error type is preserved")
+		assert.Equal(t, slow.URL+"/<redacted>/getUpdates", urlErr.URL, "only the token is replaced")
+		assert.True(t, urlErr.Timeout(), "timeout detection still works")
+	})
+}
+
+func TestTelegram_RequestKeepsDefaultTransportPool(t *testing.T) {
+	// unrelated user of http.DefaultTransport, which telegram requests should not affect
+	var newConns int32
+	other := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("pong"))
+	}))
+	other.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			atomic.AddInt32(&newConns, 1)
+		}
+	}
+	other.Start()
+	defer other.Close()
+
+	call := func() {
+		resp, err := http.DefaultClient.Get(other.URL) //nolint:noctx // simple test call
+		require.NoError(t, err)
+		_, err = io.Copy(io.Discard, resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+	}
+
+	call()
+	require.Equal(t, int32(1), atomic.LoadInt32(&newConns))
+
+	ts := mockTelegramServer(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(getMeResp))
+	})
+	defer ts.Close()
+	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
+	require.NoError(t, err)
+	require.NoError(t, tb.Request(context.Background(), "getMe", nil, &struct{}{}))
+
+	call()
+	assert.Equal(t, int32(1), atomic.LoadInt32(&newConns), "idle connection of the default transport should be reused")
 }
 
 const errorResp = `{"ok":false,"error_code":400,"description":"Very bad request"}`

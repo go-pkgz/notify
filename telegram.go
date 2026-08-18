@@ -413,7 +413,7 @@ func (t *Telegram) processUpdates(ctx context.Context, updates *TelegramUpdate) 
 
 // sendText sends a plain text message to telegram peer
 func (t *Telegram) sendText(ctx context.Context, recipientID int, msg string) error {
-	url := fmt.Sprintf("sendMessage?chat_id=%d&text=%s", recipientID, neturl.PathEscape(msg))
+	url := fmt.Sprintf("sendMessage?chat_id=%d&text=%s", recipientID, neturl.QueryEscape(msg))
 	return t.Request(ctx, url, nil, &struct{}{})
 }
 
@@ -445,17 +445,18 @@ func (t *Telegram) Request(ctx context.Context, method string, b []byte, data an
 			req, err = http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
 		} else {
 			req, err = http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
-			req.Header.Set("Content-Type", "application/json; charset=utf-8")
 		}
 		if err != nil {
-			return fmt.Errorf("failed to create request: %w", err)
+			return fmt.Errorf("failed to create request: %w", t.redactToken(err))
+		}
+		if b != nil {
+			req.Header.Set("Content-Type", "application/json; charset=utf-8")
 		}
 
 		client := http.Client{Timeout: t.Timeout}
-		defer client.CloseIdleConnections()
 		resp, err := client.Do(req)
 		if err != nil {
-			return fmt.Errorf("failed to send request: %w", err)
+			return fmt.Errorf("failed to send request: %w", t.redactToken(err))
 		}
 		defer resp.Body.Close()
 
@@ -469,6 +470,16 @@ func (t *Telegram) Request(ctx context.Context, method string, b []byte, data an
 
 		return nil
 	})
+}
+
+// redactToken hides the bot token in the URL of *url.Error returned by the http client,
+// as the token is a part of every API URL and otherwise leaks into the logs of the caller printing the error
+func (t *Telegram) redactToken(err error) error {
+	var urlErr *neturl.Error
+	if t.Token == "" || !errors.As(err, &urlErr) || !strings.Contains(urlErr.URL, t.Token) {
+		return err
+	}
+	return &neturl.Error{Op: urlErr.Op, URL: strings.ReplaceAll(urlErr.URL, t.Token, "<redacted>"), Err: urlErr.Err}
 }
 
 func (t *Telegram) parseError(r io.Reader, statusCode int) error {
