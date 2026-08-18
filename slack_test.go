@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/slack-go/slack"
@@ -22,6 +23,23 @@ func TestSlack_Send(t *testing.T) {
 
 	err := tb.Send(context.Background(), "slack:general?title=title&attachmentText=test%20text&titleLink=https://example.org", "test text")
 	require.NoError(t, err)
+	assert.Contains(t, ts.lastMessage.Get("attachments"), "test text")
+
+	// attachment text alone is enough, the title is not required for it
+	ts.lastMessage = nil
+	require.NoError(t, tb.Send(context.Background(), "slack:general?attachmentText=attachment%20text", "test text"))
+	assert.Contains(t, ts.lastMessage.Get("attachments"), "attachment text", "attachment is sent without the title set")
+
+	for _, destination := range []string{
+		"slack:general",
+		"slack:general?titleLink=https://example.org", // slack has nothing to put the link on without a title
+	} {
+		t.Run(destination, func(t *testing.T) {
+			ts.lastMessage = nil
+			require.NoError(t, tb.Send(context.Background(), destination, "test text"))
+			assert.Empty(t, ts.lastMessage.Get("attachments"), "no attachment without a title or a text")
+		})
+	}
 
 	ts.isServerDown = true
 	err = tb.Send(context.Background(), "slack:general?title=title&attachmentText=test%20text&titleLink=https://example.org", "test text")
@@ -69,6 +87,7 @@ type mockSlackServer struct {
 	*httptest.Server
 	isServerDown    bool
 	listingIsBroken bool
+	lastMessage     url.Values // form of the last chat.postMessage call
 }
 
 func (ts *mockSlackServer) newClient() *Slack {
@@ -119,7 +138,10 @@ func newMockSlackServer() *mockSlackServer {
 		}
 	})
 
-	mux.HandleFunc("POST /chat.postMessage", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST /chat.postMessage", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err == nil {
+			mockServer.lastMessage = r.PostForm
+		}
 		if mockServer.isServerDown {
 			w.WriteHeader(500)
 		} else {
