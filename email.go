@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/mail"
 	"net/url"
@@ -23,7 +24,7 @@ type SMTPParams struct {
 	LoginAuth          bool          // LOGIN auth method instead of default PLAIN, needed for Office 365 and outlook.com
 	Username           string        // username
 	Password           string        // password
-	TimeOut            time.Duration // TCP connection timeout
+	TimeOut            time.Duration // TCP connection timeout, the rest of the transaction is bound by the context of Send
 }
 
 // Email notifications client
@@ -95,12 +96,13 @@ func (e *Email) Send(ctx context.Context, destination, text string) error {
 		return fmt.Errorf("problem parsing destination: %w", err)
 	}
 
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		return e.sender.Send(text, emailParams)
+	// SendContext terminates the transaction when ctx is done, including the parts after the connection is made
+	err = e.sender.SendContext(ctx, text, emailParams)
+	if err != nil && ctx.Err() != nil && !errors.Is(err, ctx.Err()) {
+		// transaction was interrupted, report why on top of the error it failed with
+		return fmt.Errorf("%w: %w", ctx.Err(), err)
 	}
+	return err
 }
 
 // Schema returns schema prefix supported by this client

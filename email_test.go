@@ -2,6 +2,11 @@ package notify
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -73,4 +78,65 @@ func TestEmailSendClientError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	assert.EqualError(t, email.Send(ctx, "mailto:test@example.org", ""), "context canceled")
+}
+
+func TestEmail_SendCancellationAfterConnect(t *testing.T) {
+	// server accepts the connection, greets and stops responding
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer func() { _ = ln.Close() }()
+
+	var once sync.Once
+	greeted := make(chan struct{}) // closed once the client sent a command, i.e. it is past the connection and the greeting
+	wg.Go(func() {
+		for {
+			conn, e := ln.Accept()
+			if e != nil {
+				return
+			}
+			wg.Go(func() {
+				defer func() { _ = conn.Close() }()
+				// server side gives up on its own, so a regression fails the test instead of hanging the suite
+				_ = conn.SetDeadline(time.Now().Add(time.Second * 20))
+				_, _ = fmt.Fprint(conn, "220 localhost ESMTP stub\r\n")
+				buf := make([]byte, 1)
+				if _, e := conn.Read(buf); e == nil {
+					once.Do(func() { close(greeted) })
+				}
+				_, _ = io.Copy(io.Discard, conn)
+			})
+		}
+	})
+
+	host, portStr, err := net.SplitHostPort(ln.Addr().String())
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+
+	// connection timeout is long on purpose, the context should terminate the send
+	email := NewEmail(SMTPParams{Host: host, Port: port, TimeOut: time.Minute})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// cancel only once the transaction is past the connection, otherwise the test proves nothing
+	go func() {
+		<-greeted
+		cancel()
+	}()
+	failsafe := time.AfterFunc(time.Second*30, cancel)
+	defer failsafe.Stop()
+
+	st := time.Now()
+	err = email.Send(ctx, "mailto:test@example.org?from=notify@example.org", "test")
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled, "cancellation is visible to the caller")
+	assert.Less(t, time.Since(st), time.Second*5, "send is terminated by the context, not by the stalled server")
+	select {
+	case <-greeted:
+	default:
+		t.Fatal("send was canceled before the connection was established, the test proves nothing")
+	}
 }
