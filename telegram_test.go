@@ -738,3 +738,128 @@ func mockTelegramServer(h http.HandlerFunc) *httptest.Server {
 
 	return httptest.NewServer(mux)
 }
+
+const fixtureToken = "1234567:SECRET-TOK_EN-x"
+
+// TestTelegram_APIURLRejectsUnusableValues covers the validation a caller-supplied base needs.
+// Every request built from it carries the bot token in its path, so a base that resolves somewhere
+// unintended ships the token there, and TrimRight alone is not a guard.
+func TestTelegram_APIURLRejectsUnusableValues(t *testing.T) {
+	// every value here exists to be refused; the userinfo one is a url whose host is evil.tld,
+	// which is exactly what the validator has to catch
+	for name, base := range map[string]string{ //nolint:gosec // G101: urls to be refused, not credentials
+		"userinfo redirects the host": "https://api.telegram.org@evil.tld",
+		"no scheme":                   "api.telegram.org",
+		"wrong scheme":                "ftp://api.telegram.org",
+		"opaque":                      "https:api.telegram.org",
+		"no host":                     "https://",
+		"port without a host":         "http://:9000",
+		"carries a query":             "https://api.telegram.org?a=b",
+		"carries a fragment":          "https://api.telegram.org#x",
+		"credentialed and malformed":  "https://user:pa%zzss@api.telegram.org",
+		"secret in place of a port":   "https://proxy.example.com:s3cr3t/tg",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewTelegram(TelegramParams{Token: fixtureToken, APIURL: base})
+			require.Error(t, err, "%s has to be refused", base)
+
+			// the refusal is logged by whoever built the client, and the value it refused is
+			// untrusted configuration: without this every rejection could interpolate the base
+			// back and stay green
+			assert.NotContains(t, err.Error(), strings.TrimRight(base, "/"),
+				"the rejection echoed the base url it refused")
+		})
+	}
+}
+
+// TestTelegram_APIURLIsUsedForRequests pins that a valid base actually redirects the calls, path
+// prefix included, and that the "bot" segment is the API's own shape rather than the caller's
+// problem.
+func TestTelegram_APIURLIsUsedForRequests(t *testing.T) {
+	const token = fixtureToken
+
+	var seen string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.URL.Path
+		_, _ = fmt.Fprint(w, `{"ok":true,"result":{"username":"somebot"}}`)
+	}))
+	defer ts.Close()
+
+	tg, err := NewTelegram(TelegramParams{Token: token, APIURL: ts.URL + "/tg/"})
+	require.NoError(t, err)
+	assert.Equal(t, "somebot", tg.username)
+	assert.Equal(t, "/tg/bot"+token+"/getMe", seen,
+		"the request did not go through the configured base, or the bot segment was lost")
+}
+
+// TestTelegram_APIErrorDoesNotLeakTheToken covers the route the settable base opens. The upstream
+// decides an error's text, so something standing in for Telegram can echo the request URI into its
+// description, and the shape-matching redaction that came before only ever looked at *url.Error's
+// URL field.
+func TestTelegram_APIErrorDoesNotLeakTheToken(t *testing.T) {
+	const token = fixtureToken
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		// the echo is the point: an upstream putting the request uri into its own error text is
+		// the route this test exists for
+		_, _ = fmt.Fprintf(w, `{"description":%q}`, "forwarding "+r.URL.RequestURI()) //nolint:gosec // G705: the response is read by this test, never rendered
+	}))
+	defer ts.Close()
+
+	_, err := NewTelegram(TelegramParams{Token: token, APIURL: ts.URL})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), token, "the api error carried the bot token")
+}
+
+// TestTelegram_APIErrorWithheldWhenEscapingIsMalformed covers the direction tokenRecoverable has to
+// fail in: a bare "%" stops the decoder before it reaches an encoded copy of the token, and
+// answering "not recoverable" there would release text whose encodings were never undone.
+func TestTelegram_APIErrorWithheldWhenEscapingIsMalformed(t *testing.T) {
+	const token = fixtureToken
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		doubled := neturl.QueryEscape(neturl.QueryEscape(r.URL.RequestURI()))
+		_, _ = fmt.Fprintf(w, `{"description":%q}`, "forwarding "+doubled+" at 100% load")
+	}))
+	defer ts.Close()
+
+	_, err := NewTelegram(TelegramParams{Token: token, APIURL: ts.URL})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "text withheld", "an undecodable description was released")
+
+	text := err.Error()
+	for i := 0; i < 5; i++ {
+		assert.NotContains(t, text, token, "the token is recoverable after %d decoding passes", i)
+		next, decErr := neturl.QueryUnescape(text)
+		if decErr != nil || next == text {
+			break
+		}
+		text = next
+	}
+}
+
+// TestTelegram_DoesNotFollowRedirects covers the other route out. Go copies the previous URL into
+// Referer on an https-to-https hop, and every URL here carries the token in its path, so following
+// a redirect hands the destination the token.
+func TestTelegram_DoesNotFollowRedirects(t *testing.T) {
+	const token = fixtureToken
+
+	var refererSeen string
+	dest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refererSeen = r.Header.Get("Referer")
+		_, _ = fmt.Fprint(w, `{"ok":true,"result":{"username":"somebot"}}`)
+	}))
+	defer dest.Close()
+
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, dest.URL+"/next", http.StatusFound)
+	}))
+	defer src.Close()
+
+	_, err := NewTelegram(TelegramParams{Token: token, APIURL: src.URL})
+	require.Error(t, err, "the redirect was followed")
+	assert.Empty(t, refererSeen, "the redirect target was reached and saw Referer %q", refererSeen)
+	assert.NotContains(t, err.Error(), token, "the refusal itself leaked the token")
+}
