@@ -25,7 +25,7 @@ import (
 type TelegramParams struct {
 	Token                string        // token for telegram bot API interactions
 	Timeout              time.Duration // http client timeout
-	ErrorMsg, SuccessMsg string        // messages for successful and unsuccessful subscription requests to bot
+	ErrorMsg, SuccessMsg string        // messages for unsuccessful and successful subscription requests to bot
 
 	// APIURL points the client at something other than the public bot API, for a proxy standing in
 	// front of Telegram or a test double answering as it. Empty means the public API. Every request
@@ -269,7 +269,8 @@ func (t *Telegram) AddToken(token, user, site string, expires time.Time) {
 	t.requests.Unlock()
 }
 
-// CheckToken verifies incoming token, returns the user address if it's confirmed and empty string otherwise
+// CheckToken returns the Telegram chat ID and the site of a confirmed token, and consumes it;
+// otherwise it returns an error
 func (t *Telegram) CheckToken(token, user string) (telegram, site string, err error) {
 	// lookup and consumption are a single transaction, so the one-time token can't be used twice
 	t.requests.Lock()
@@ -298,8 +299,8 @@ func (t *Telegram) CheckToken(token, user string) (telegram, site string, err er
 	return authRequest.telegramID, authRequest.site, nil
 }
 
-// Run starts processing login requests sent in Telegram, required for user notifications to work
-// Blocks caller
+// Run starts processing login requests sent in Telegram, required for users to subscribe through the bot;
+// not needed for Send. Blocks caller
 func (t *Telegram) Run(ctx context.Context) {
 	t.updates.Lock()
 	if t.updates.running {
