@@ -2,10 +2,13 @@ package notify
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/stretchr/testify/assert"
@@ -83,11 +86,64 @@ func TestSlackSendClientError(t *testing.T) {
 	require.EqualError(t, slck.Send(ctx, "slack:general?title=test", ""), "context canceled")
 }
 
+func TestSlack_SendToID(t *testing.T) {
+	ts := newMockSlackServer()
+	defer ts.Close()
+	tb := ts.newClient()
+
+	for _, id := range []string{"C0123ABC", "G0PRIVATE", "D0DIRECT", "U0123ABC", "W0ENTUSER"} {
+		t.Run(id, func(t *testing.T) {
+			ts.listCalls.Store(0)
+			ts.lastMessage = nil
+			require.NoError(t, tb.Send(context.Background(), "slack:"+id, "test text"))
+			assert.Equal(t, id, ts.lastMessage.Get("channel"), "an ID is posted to as it is")
+			assert.Zero(t, ts.listCalls.Load(), "an ID is not looked up by name")
+		})
+	}
+
+	// anything else is a name: lower-case, starting with another letter or a digit, or just one letter
+	for _, name := range []string{"general", "customers", "2024", "C", "Cgeneral", "C0123-ABC"} {
+		t.Run(name, func(t *testing.T) {
+			ts.listCalls.Store(0)
+			err := tb.Send(context.Background(), "slack:"+name, "test text")
+			if name == "general" {
+				require.NoError(t, err)
+			} else {
+				require.EqualError(t, err, "problem parsing destination: problem retrieving channel ID for #"+name+": no such channel")
+			}
+			assert.Equal(t, int32(1), ts.listCalls.Load(), "a name is looked up")
+		})
+	}
+}
+
+func TestSlack_SendNameLookupUsesContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// the server notices the client went away only once the request body is read
+		_, _ = io.Copy(io.Discard, r.Body)
+		// the caller gives up while the listing is in flight
+		cancel()
+		select {
+		case <-r.Context().Done():
+		case <-time.After(10 * time.Second):
+			_, _ = w.Write([]byte(`{"ok":true,"channels":[],"response_metadata":{"next_cursor":""}}`))
+		}
+	}))
+	defer ts.Close()
+
+	st := time.Now()
+	err := NewSlack("any-token", slack.OptionAPIURL(ts.URL+"/")).Send(ctx, "slack:general", "test text")
+	require.ErrorIs(t, err, context.Canceled, "the lookup ends with the context of Send")
+	assert.Less(t, time.Since(st), 5*time.Second)
+}
+
 type mockSlackServer struct {
 	*httptest.Server
 	isServerDown    bool
 	listingIsBroken bool
-	lastMessage     url.Values // form of the last chat.postMessage call
+	lastMessage     url.Values   // form of the last chat.postMessage call
+	listCalls       atomic.Int32 // number of conversations.list calls
 }
 
 func (ts *mockSlackServer) newClient() *Slack {
@@ -98,6 +154,7 @@ func newMockSlackServer() *mockSlackServer {
 	mockServer := mockSlackServer{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /conversations.list", func(w http.ResponseWriter, _ *http.Request) {
+		mockServer.listCalls.Add(1)
 		if mockServer.listingIsBroken {
 			w.WriteHeader(500)
 		} else {

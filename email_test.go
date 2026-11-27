@@ -55,7 +55,10 @@ func TestEmailDefaultHELOHost(t *testing.T) {
 func TestEmailSendClientError(t *testing.T) {
 	email := NewEmail(SMTPParams{Host: "test@host", Username: "user", TLS: true})
 
-	assert.Equal(t, "email: with username 'user' at server test@host:0 with TLS", email.String())
+	assert.Equal(t, "email: with username 'user' at server test@host:25 with TLS", email.String(), "port 25 is used when unset")
+	assert.Contains(t, email.sender.String(), "smtp://test@host:25,", "the sender connects to the port String reports")
+	assert.Equal(t, "email: with username '' at server smtp.example.org:2525 with StartTLS",
+		NewEmail(SMTPParams{Host: "smtp.example.org", Port: 2525, StartTLS: true}).String())
 
 	// no destination set
 	require.EqualError(t, email.Send(context.Background(), "", ""),

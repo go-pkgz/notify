@@ -115,9 +115,16 @@ func (e *Email) Schema() string {
 	return "mailto"
 }
 
+// defaultSMTPPort is the port the email sender connects to when SMTPParams.Port is not set
+const defaultSMTPPort = 25
+
 // String representation of Email object
 func (e *Email) String() string {
-	str := fmt.Sprintf("email: with username '%s' at server %s:%d", e.Username, e.Host, e.Port)
+	port := e.Port
+	if port == 0 {
+		port = defaultSMTPPort
+	}
+	str := fmt.Sprintf("email: with username '%s' at server %s:%d", e.Username, e.Host, port)
 	if e.TLS {
 		str += " with TLS"
 	}
