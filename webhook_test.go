@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -189,4 +190,28 @@ func TestWebhook_SendReusesConnection(t *testing.T) {
 		require.NoError(t, wh.Send(context.Background(), ts.URL, "some_text"))
 	}
 	assert.Equal(t, int32(1), atomic.LoadInt32(&newConns), "response body is drained, so the connection is reused")
+}
+
+func TestWebhook_SendDoesNotFollowRedirects(t *testing.T) {
+	var landed atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/landed" {
+			landed.Add(1)
+			return
+		}
+		code, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/"))
+		http.Redirect(w, r, "/landed", code)
+	}))
+	defer ts.Close()
+
+	wh := NewWebhook(WebhookParams{})
+	for _, code := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			err := wh.Send(context.Background(), ts.URL+"/"+strconv.Itoa(code), "payload")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "webhook request failed with non-OK status code: "+strconv.Itoa(code))
+		})
+	}
+	assert.Zero(t, landed.Load(), "a redirect is not followed")
 }

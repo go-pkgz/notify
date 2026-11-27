@@ -45,12 +45,19 @@ func NewWebhook(params WebhookParams) *Webhook {
 		res.Timeout = webhookTimeOut
 	}
 
-	res.webhookClient = &http.Client{Timeout: res.Timeout}
+	res.webhookClient = &http.Client{
+		Timeout: res.Timeout,
+		// a redirect is reported as a failure instead of followed: following a 301, 302 or 303 turns the
+		// POST into a GET without the text, and the answer to that GET says nothing about the delivery
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 
 	return res
 }
 
 // Send sends Webhook notification. Destination field is expected to have http:// or https:// schema.
+// The text is sent as the body of a POST request. A response status outside 2xx is returned as an error,
+// redirects included: they are not followed.
 //
 // Example:
 //

@@ -49,9 +49,9 @@ A runnable version of the same flow, sending to a local test server instead of a
 
 ### Email
 
-`mailto:` [scheme](https://datatracker.ietf.org/doc/html/rfc6068) is supported. Only `subject` and `from` query params are used.
+`mailto:` [scheme](https://datatracker.ietf.org/doc/html/rfc6068) is supported. Only `subject` and `from` query params are used. The `from` parameter is required: without it, `Send` returns an error and sends nothing.
 
-**Note:** Query parameter values must be URL-encoded. In particular, email addresses containing `+` (e.g. `noreply+tag@example.com`) must use `%2B`, otherwise `+` is interpreted as a space. Use `url.QueryEscape` for all parameter values.
+**Note:** Query parameter values must be URL-encoded. In particular, email addresses containing `+` (e.g. `noreply+tag@example.com`) must use `%2B`, otherwise `+` is interpreted as a space. Use `url.QueryEscape` for all parameter values. Percent-encoded recipients before `?` are decoded, as RFC 6068 has it, so `a%2Btag@example.org` and `a+tag@example.org` reach the same address. A recipient that does not decode to one plain address, such as one with an encoded comma or an encoded quoted local part, is an error, and one that is not valid percent-encoding, such as `user%host@example.org`, is used as written.
 
 Examples:
 
@@ -94,7 +94,7 @@ func main() {
 
 ### Telegram
 
-`telegram:` scheme akin to `mailto:` is supported. Query params `parseMode` ([doc](https://core.telegram.org/bots/api#formatting-options), legacy `Markdown` by default, preferable use `MarkdownV2` or `HTML` instead). Examples:
+`telegram:` scheme akin to `mailto:` is supported. Query params `parseMode` ([doc](https://core.telegram.org/bots/api#formatting-options), legacy `Markdown` by default, preferable use `MarkdownV2` or `HTML` instead, or `none` to send plain text). Examples:
 
 - `telegram:channel`
 - `telegram:channelID` // channel ID is a number, like `-1001480738202`: use [that instruction](https://remark42.com/docs/configuration/telegram/#notifications-for-administrators) to obtain it
@@ -116,7 +116,7 @@ import (
 func main() {
 	tg, err := notify.NewTelegram(notify.TelegramParams{
 		Token:      "token",          // required
-		Timeout:    time.Second * 10, // default is 5 seconds
+		Timeout:    time.Second * 10, // per attempt, default is 5 seconds
 		SuccessMsg: "Success",        // optional, for auth, set by default
 		ErrorMsg:   "Error",          // optional, for auth, unset by default
 	})
@@ -130,9 +130,11 @@ func main() {
 }
 ```
 
+Each call to the Telegram API is tried up to three times, 250 milliseconds apart, when the API answers with status 429 or the TCP connection to it can't be opened, as when it is refused or the name does not resolve. A method that only reads, one whose name starts with `get` such as `getMe` and `getUpdates`, is also tried again after any other transport failure, including a timeout and one while the answer is read, and after a 5xx answer. Anything else is returned at once, so a message that may have reached Telegram, as after a timeout or a 5xx answer, is not sent twice. A failed connection through a proxy, or one that takes longer than `Timeout`, counts as such a case and is not tried again.
+
 #### HTML Formatting
 
-parseMode `HTML` supports [limited set of tags](https://core.telegram.org/bots/api#html-style), so `Telegram` provides `TelegramSupportedHTML` method which strips all unsupported tags and replaces `h1-h3` with `<b>` and `h4-h6` with `<i><b>` to preserve formatting.
+parseMode `HTML` supports [limited set of tags](https://core.telegram.org/bots/api#html-style), so the package provides the `TelegramSupportedHTML` function, which strips all unsupported tags and replaces `h1-h3` with `<b>` and `h4-h6` with `<i><b>` to preserve formatting. The end of a paragraph or a list item and a line break become a newline, unless the HTML already has one there, and trailing newlines are removed.
 
 If you want to post text into HTML tag like <a>text</a>, you can use `EscapeTelegramText` method to escape it (by replacing symbols `&`, `<`, `>` with `&amp;`, `&lt;`, `&gt;`).
 
@@ -182,7 +184,7 @@ func main() {
 
 ### Webhook
 
-`http://` and `https://` schemas are supported.
+`http://` and `https://` schemas are supported. Redirects are not followed: a 3xx response is returned as an error.
 
 ```go
 package main

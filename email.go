@@ -84,12 +84,13 @@ func NewEmail(smtpParams SMTPParams) *Email {
 }
 
 // Send sends the message over Email, with "from", "subject" and "unsubscribeLink" parsed from destination field
-// with "mailto:" schema.
+// with "mailto:" schema. "from" is required, without it an error is returned and nothing is sent.
 // "unsubscribeLink" passed as a header, https://support.google.com/mail/answer/81126 -> "Use one-click unsubscribe"
 //
 // Note: query parameter values in the mailto URL must be properly URL-encoded. In particular, email addresses
 // containing "+" (e.g. "noreply+tag@example.com") must use "%2B" instead, otherwise "+" is interpreted as a space
-// per standard URL query string parsing. Use url.QueryEscape for all parameter values.
+// per standard URL query string parsing. Use url.QueryEscape for all parameter values. Recipients before "?"
+// are percent-decoded, see decodeRecipient.
 //
 // Example:
 //
@@ -152,6 +153,9 @@ func (e *Email) parseDestination(destination string) (email.Params, error) {
 	}
 	destinations := []string{}
 	for _, addr := range addresses {
+		if addr.Address, err = decodeRecipient(addr.Address); err != nil {
+			return email.Params{}, fmt.Errorf("problem parsing email recipients: %w", err)
+		}
 		stringAddr := addr.String()
 		// in case of mailgun, correct RFC5322 address with <> yield 501 error, so we need to remove brackets
 		if strings.HasPrefix(stringAddr, "<") && strings.HasSuffix(stringAddr, ">") {
@@ -160,10 +164,32 @@ func (e *Email) parseDestination(destination string) (email.Params, error) {
 		destinations = append(destinations, stringAddr)
 	}
 
+	from := u.Query().Get("from")
+	if strings.TrimSpace(from) == "" {
+		return email.Params{}, errors.New(`"from" query parameter is required`)
+	}
+
 	return email.Params{
-		From:            u.Query().Get("from"),
+		From:            from,
 		To:              destinations,
 		Subject:         u.Query().Get("subject"),
 		UnsubscribeLink: u.Query().Get("unsubscribeLink"),
 	}, nil
+}
+
+// decodeRecipient returns a recipient address with its percent-encoding undone, as RFC 6068 has it, so
+// "a%2Btag@example.org" is sent to "a+tag@example.org". An address that is not valid percent-encoding,
+// such as "user%host@relay.example.org", is returned as written. A decoded address must still be one
+// plain address on its own, so an encoded comma or angle bracket can't change who receives the message;
+// an encoded quoted local part is refused for the same reason.
+func decodeRecipient(address string) (string, error) {
+	decoded, err := url.PathUnescape(address)
+	if err != nil || decoded == address {
+		return address, nil // not percent-encoded, used as written
+	}
+	parsed, err := mail.ParseAddress(decoded)
+	if err != nil || parsed.Address != decoded {
+		return "", fmt.Errorf("recipient %q is not one address once decoded", address)
+	}
+	return decoded, nil
 }

@@ -89,7 +89,7 @@ func TestEmailSendClientError(t *testing.T) {
 	// canceled context
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	assert.EqualError(t, email.Send(ctx, "mailto:test@example.org", ""), "context canceled")
+	assert.EqualError(t, email.Send(ctx, "mailto:test@example.org?from=notify@example.org", ""), "context canceled")
 }
 
 func TestEmail_SendCancellationAfterConnect(t *testing.T) {
@@ -150,5 +150,59 @@ func TestEmail_SendCancellationAfterConnect(t *testing.T) {
 	case <-greeted:
 	default:
 		t.Fatal("send was canceled before the connection was established, the test proves nothing")
+	}
+}
+
+func TestEmail_ParseDestinationRequiresFrom(t *testing.T) {
+	e := NewEmail(SMTPParams{Host: "127.0.0.1"})
+	for _, destination := range []string{
+		"mailto:a@example.org",
+		"mailto:a@example.org?subject=s",
+		"mailto:a@example.org?from=",
+		"mailto:a@example.org?from=%20",
+	} {
+		t.Run(destination, func(t *testing.T) {
+			_, err := e.parseDestination(destination)
+			require.EqualError(t, err, `"from" query parameter is required`)
+		})
+	}
+	require.EqualError(t, e.Send(context.Background(), "mailto:a@example.org?subject=s", "text"),
+		`problem parsing destination: "from" query parameter is required`, "nothing is sent without a sender")
+
+	params, err := e.parseDestination(`mailto:a@example.org?from="Notifier"<notify@example.org>`)
+	require.NoError(t, err)
+	assert.Equal(t, `"Notifier"<notify@example.org>`, params.From)
+}
+
+func TestEmail_ParseDestinationDecodesRecipients(t *testing.T) {
+	e := NewEmail(SMTPParams{Host: "127.0.0.1"})
+	for destination, want := range map[string][]string{
+		"mailto:a%2Btag@example.org?from=n@example.org":                      {"a+tag@example.org"},
+		"mailto:a+tag@example.org?from=n@example.org":                        {"a+tag@example.org"},
+		"mailto:a%2Btag@example.org,b@example.org?from=n@example.org":        {"a+tag@example.org", "b@example.org"},
+		`mailto:"John Wayne"<j%2Bw@example.org>?from=n@example.org`:          {`"John Wayne" <j+w@example.org>`},
+		"mailto:user%host@relay.example.org?from=n@example.org":              {"user%host@relay.example.org"},
+		"mailto:%61%62c@example.org?from=n@example.org":                      {"abc@example.org"},
+		"mailto:addr1@example.org,addr2@example.org?from=notify@example.org": {"addr1@example.org", "addr2@example.org"},
+	} {
+		t.Run(destination, func(t *testing.T) {
+			params, err := e.parseDestination(destination)
+			require.NoError(t, err)
+			assert.Equal(t, want, params.To)
+		})
+	}
+
+	// an encoded separator would turn one recipient into several or into another one
+	for _, destination := range []string{
+		"mailto:a%2Cb@example.org?from=n@example.org",
+		"mailto:a%40evil.example.org%2Cv@example.org?from=n@example.org",
+		"mailto:a%3Cv%40evil.example.org%3E@example.org?from=n@example.org",
+		"mailto:a%20b@example.org?from=n@example.org",
+	} {
+		t.Run(destination, func(t *testing.T) {
+			_, err := e.parseDestination(destination)
+			require.ErrorContains(t, err, "problem parsing email recipients: recipient ")
+			require.ErrorContains(t, err, " is not one address once decoded")
+		})
 	}
 }
