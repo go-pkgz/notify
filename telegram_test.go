@@ -904,6 +904,11 @@ func TestTelegram_RequestRetries(t *testing.T) {
 			_, _ = w.Write([]byte(`{"ok":true,"result":`))
 			w.(http.Flusher).Flush()
 			panic(http.ErrAbortHandler)
+		case "cut after the answer": // the whole answer arrives, the connection closes before the body ends
+			w.Header().Set("Content-Length", "100")
+			_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+			w.(http.Flusher).Flush()
+			panic(http.ErrAbortHandler)
 		case "ok":
 			_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
 		default:
@@ -928,6 +933,7 @@ func TestTelegram_RequestRetries(t *testing.T) {
 		{reply: "not json", updates: 1, sends: 1},
 		{reply: "truncated json", updates: 1, sends: 1},
 		{reply: "cut body", updates: 3, sends: 1},
+		{reply: "cut after the answer", updates: 1, sends: 1},
 		{reply: "429", updates: 3, sends: 3},
 		{reply: "500", updates: 3, sends: 1},
 		{reply: "502", updates: 3, sends: 1},
@@ -942,9 +948,10 @@ func TestTelegram_RequestRetries(t *testing.T) {
 				tb.Timeout = 200 * time.Millisecond // the server never answers in time
 			}
 
+			wantOK := tt.reply == "ok" || tt.reply == "cut after the answer"
 			attempts.Store(0)
 			_, err := tb.getUpdates(context.Background())
-			assert.Equal(t, tt.reply == "ok", err == nil, "getUpdates error: %v", err)
+			assert.Equal(t, wantOK, err == nil, "getUpdates error: %v", err)
 			if tt.reply == "hang up" {
 				// net/http itself sends a GET again when a reused connection closes without an answer
 				assert.GreaterOrEqual(t, attempts.Load(), tt.updates, "getUpdates attempts")
@@ -954,19 +961,19 @@ func TestTelegram_RequestRetries(t *testing.T) {
 
 			attempts.Store(0)
 			err = tb.Send(context.Background(), "telegram:1", "text")
-			assert.Equal(t, tt.reply == "ok", err == nil, "Send error: %v", err)
+			assert.Equal(t, wantOK, err == nil, "Send error: %v", err)
 			assert.Equal(t, tt.sends, attempts.Load(), "sendMessage attempts of Send")
 
 			// the reply to a subscriber goes through sendMessage as well
 			attempts.Store(0)
 			err = tb.sendText(context.Background(), 1, "text")
-			assert.Equal(t, tt.reply == "ok", err == nil, "sendText error: %v", err)
+			assert.Equal(t, wantOK, err == nil, "sendText error: %v", err)
 			assert.Equal(t, tt.sends, attempts.Load(), "sendMessage attempts of sendText")
 
 			// a method other than sendMessage that changes something, as the API's own name says
 			attempts.Store(0)
 			err = tb.Request(context.Background(), "forwardMessage?chat_id=1", []byte(`{}`), &struct{}{})
-			assert.Equal(t, tt.reply == "ok", err == nil, "forwardMessage error: %v", err)
+			assert.Equal(t, wantOK, err == nil, "forwardMessage error: %v", err)
 			assert.Equal(t, tt.sends, attempts.Load(), "forwardMessage attempts")
 
 			// a read-only method in another case, telegram takes method names in any case

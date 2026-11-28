@@ -558,6 +558,9 @@ var errTelegramRedirect = errors.New("refusing to follow a telegram api redirect
 // may have reached Telegram, as after a timeout or a 5xx, another attempt could deliver the message
 // twice. A failed connection through a proxy, or one cut short by Timeout, is not told apart from such
 // a case.
+//
+// An answer whose JSON decodes in full is a success even when the connection breaks after it, before
+// the body ends.
 func (t *Telegram) Request(ctx context.Context, method string, b []byte, data any) error {
 	methodName, _, _ := strings.Cut(method, "?")
 	// telegram method names are case-insensitive, and the read-only ones are named get...
@@ -615,18 +618,18 @@ func (t *Telegram) Request(ctx context.Context, method string, b []byte, data an
 			return t.redactToken(t.parseError(resp.Body, resp.StatusCode))
 		}
 
-		// read in full first, so a connection failing in the middle of the answer is told apart from an
-		// answer that is not valid JSON, which another attempt would not change
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
+		// read in full before decoding, so a read failure is told apart from JSON that is not valid, which
+		// another attempt would not change; an answer that decodes is a success even if reading the rest
+		// of the body failed
+		body, readErr := io.ReadAll(resp.Body)
+		if err = json.NewDecoder(bytes.NewReader(body)).Decode(data); err == nil {
+			return nil
+		}
+		if readErr != nil {
 			retry = readOnly
-			return fmt.Errorf("failed to decode json response: %w", err)
+			return fmt.Errorf("failed to decode json response: %w", readErr)
 		}
-		if err = json.NewDecoder(bytes.NewReader(body)).Decode(data); err != nil {
-			return fmt.Errorf("failed to decode json response: %w", err)
-		}
-
-		return nil
+		return fmt.Errorf("failed to decode json response: %w", err)
 	})
 }
 
