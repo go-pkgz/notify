@@ -207,7 +207,7 @@ func main() {
 
 ### Webhook
 
-`http://` and `https://` schemas are supported. The text is sent as the raw body of a `POST` request, with no `Content-Type` unless one is set in `Headers`. A response status outside 2xx is returned as an error quoting up to 16 KiB of the response body. Redirects are not followed: a 3xx response is returned as an error.
+`http://` and `https://` schemas are supported. The text is sent as the raw body of a `POST` request, with no `Content-Type` unless one is set in `Headers`. A response status outside 2xx is returned as an error quoting up to 16 KiB of the response body. A `307` or `308` redirect to the same host name, spelled the same, is followed with the same body and headers, up to 10 times. The port may change, and so may the scheme from `http` to `https`, but a redirect from `https` to `http` is refused. Any other redirect, including a `301`, `302` or `303` and one to another host, is returned as an error.
 
 Each `Headers` entry is a header name and a value separated by the first colon, with spaces around both trimmed. An entry without a colon is skipped, and when a name repeats, the last value is sent.
 

@@ -45,19 +45,36 @@ func NewWebhook(params WebhookParams) *Webhook {
 		res.Timeout = webhookTimeOut
 	}
 
-	res.webhookClient = &http.Client{
-		Timeout: res.Timeout,
-		// a redirect is reported as a failure instead of followed: following a 301, 302 or 303 turns the
-		// POST into a GET without the text, and the answer to that GET says nothing about the delivery
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
+	res.webhookClient = &http.Client{Timeout: res.Timeout, CheckRedirect: webhookCheckRedirect}
 
 	return res
 }
 
+// webhookCheckRedirect follows a 307 or 308 that stays on the host name of the first request, spelled the
+// same, on any port, up to 10 redirects; it may move from http to https, never from https to http. A 307 or 308 keeps the POST,
+// its body and the Headers, which can carry credentials, so they go to no other host. The name is compared
+// exactly: one that differs only in letter case counts as another host, as some Go releases drop
+// Authorization and Cookie on such a redirect, and a Unicode case fold can join two different names. A 301, 302 or 303 turns the POST into
+// a GET without the text, and the answer to that GET says nothing about the delivery. A redirect that is
+// not followed reaches Send as the 3xx response, which Send returns as an error.
+func webhookCheckRedirect(req *http.Request, via []*http.Request) error {
+	switch {
+	case req.Response == nil: // net/http always sets it on a redirect; without it the status is unknown
+	case req.Response.StatusCode != http.StatusTemporaryRedirect && req.Response.StatusCode != http.StatusPermanentRedirect:
+	case req.URL.Hostname() != via[0].URL.Hostname():
+	case via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme != "https":
+	case len(via) > 10: // via holds the first request and every redirect followed before this one
+	default:
+		return nil
+	}
+	return http.ErrUseLastResponse
+}
+
 // Send sends Webhook notification. Destination field is expected to have http:// or https:// schema.
-// The text is sent as the body of a POST request. A response status outside 2xx is returned as an error,
-// redirects included: they are not followed.
+// The text is sent as the body of a POST request. A response status outside 2xx is returned as an error.
+// A 307 or 308 to the same host name, spelled the same, is followed up to 10 times with the same body and
+// Headers, on any port and from http to https, never from https to http; any other redirect is returned
+// as an error.
 //
 // Example:
 //
