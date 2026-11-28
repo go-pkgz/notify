@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,7 +40,6 @@ func TestTelegram_New(t *testing.T) {
 	})
 	require.EqualError(t, err, "can't retrieve bot info from Telegram API: received empty result")
 
-	st := time.Now()
 	_, err = NewTelegram(TelegramParams{ //nolint:gosec // G101: test fixture token, not a real credential
 		Token:     "non-json-resp",
 		Timeout:   2 * time.Second,
@@ -47,7 +47,6 @@ func TestTelegram_New(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decode json response:")
-	assert.GreaterOrEqual(t, time.Since(st), 250*2*time.Millisecond)
 
 	_, err = NewTelegram(TelegramParams{
 		Token:     "404",
@@ -384,8 +383,11 @@ const sendMessageResp = `{
 func TestTelegram_SendText(t *testing.T) {
 	var expectedText string
 	ts := mockTelegramServer(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "123", r.URL.Query().Get("chat_id"))
-		assert.Equal(t, expectedText, r.URL.Query().Get("text"))
+		var msg telegramMsg
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&msg))
+		assert.Equal(t, telegramMsg{Text: expectedText}, msg, "plain text, without parse_mode")
 		_, _ = w.Write([]byte(sendMessageResp))
 	})
 	defer ts.Close()
@@ -441,13 +443,13 @@ func TestTelegram_RequestDoesNotLeakToken(t *testing.T) {
 
 func TestTelegram_RequestKeepsDefaultTransportPool(t *testing.T) {
 	// unrelated user of http.DefaultTransport, which telegram requests should not affect
-	var newConns int32
+	var newConns atomic.Int32
 	other := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("pong"))
 	}))
 	other.Config.ConnState = func(_ net.Conn, state http.ConnState) {
 		if state == http.StateNew {
-			atomic.AddInt32(&newConns, 1)
+			newConns.Add(1)
 		}
 	}
 	other.Start()
@@ -462,7 +464,7 @@ func TestTelegram_RequestKeepsDefaultTransportPool(t *testing.T) {
 	}
 
 	call()
-	require.Equal(t, int32(1), atomic.LoadInt32(&newConns))
+	require.Equal(t, int32(1), newConns.Load())
 
 	ts := mockTelegramServer(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(getMeResp))
@@ -473,7 +475,7 @@ func TestTelegram_RequestKeepsDefaultTransportPool(t *testing.T) {
 	require.NoError(t, tb.Request(context.Background(), "getMe", nil, &struct{}{}))
 
 	call()
-	assert.Equal(t, int32(1), atomic.LoadInt32(&newConns), "idle connection of the default transport should be reused")
+	assert.Equal(t, int32(1), newConns.Load(), "idle connection of the default transport should be reused")
 }
 
 const errorResp = `{"ok":false,"error_code":400,"description":"Very bad request"}`
@@ -581,7 +583,7 @@ func TestTelegram_CheckTokenIsSingleUse(t *testing.T) {
 	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
 	require.NoError(t, err)
 
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		token := fmt.Sprintf("token-%d", i)
 		tb.AddToken(token, "user", "site", time.Now().Add(time.Minute))
 		tb.requests.Lock()
@@ -591,17 +593,17 @@ func TestTelegram_CheckTokenIsSingleUse(t *testing.T) {
 		tb.requests.data[token] = authRequest
 		tb.requests.Unlock()
 
-		var successes int32
+		var successes atomic.Int32
 		var wg sync.WaitGroup
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			wg.Go(func() {
 				if _, _, e := tb.CheckToken(token, "user"); e == nil {
-					atomic.AddInt32(&successes, 1)
+					successes.Add(1)
 				}
 			})
 		}
 		wg.Wait()
-		require.Equal(t, int32(1), atomic.LoadInt32(&successes), "one-time token should be accepted exactly once")
+		require.Equal(t, int32(1), successes.Load(), "one-time token should be accepted exactly once")
 	}
 	assert.Empty(t, tb.requests.data)
 }
@@ -614,7 +616,7 @@ func TestTelegram_ConcurrentConfirmAndCheck(t *testing.T) {
 	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
 	require.NoError(t, err)
 
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		token := fmt.Sprintf("token-%d", i)
 		tb.AddToken(token, "user", "site", time.Now().Add(time.Minute))
 
@@ -622,10 +624,10 @@ func TestTelegram_ConcurrentConfirmAndCheck(t *testing.T) {
 		raw := fmt.Sprintf(`{"result":[{"update_id":%d,"message":{"chat":{"id":313131313,"type":"private"},"text":"/start %s"}}]}`, i, token)
 		require.NoError(t, json.Unmarshal([]byte(raw), &upd))
 
-		var successes int32
+		var successes atomic.Int32
 		var wg, updates sync.WaitGroup
 		// the same update delivered twice, as it happens with duplicate update receivers
-		for j := 0; j < 2; j++ {
+		for range 2 {
 			updates.Go(func() {
 				tb.processUpdates(context.Background(), &upd)
 			})
@@ -641,19 +643,19 @@ func TestTelegram_ConcurrentConfirmAndCheck(t *testing.T) {
 				case <-updatesDone:
 					// last check with both updates processed, so the request is confirmed unless already used
 					if _, _, e := tb.CheckToken(token, "user"); e == nil {
-						atomic.AddInt32(&successes, 1)
+						successes.Add(1)
 					}
 					return
 				default:
 					if _, _, e := tb.CheckToken(token, "user"); e == nil {
-						atomic.AddInt32(&successes, 1)
+						successes.Add(1)
 					}
 				}
 			}
 		})
 		wg.Wait()
 
-		require.Equal(t, int32(1), atomic.LoadInt32(&successes), "confirmed request is used once and never restored after that")
+		require.Equal(t, int32(1), successes.Load(), "confirmed request is used once and never restored after that")
 	}
 }
 
@@ -830,7 +832,7 @@ func TestTelegram_APIErrorWithheldWhenEscapingIsMalformed(t *testing.T) {
 	assert.Contains(t, err.Error(), "text withheld", "an undecodable description was released")
 
 	text := err.Error()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		assert.NotContains(t, text, token, "the token is recoverable after %d decoding passes", i)
 		next, decErr := neturl.QueryUnescape(text)
 		if decErr != nil || next == text {
@@ -853,13 +855,297 @@ func TestTelegram_DoesNotFollowRedirects(t *testing.T) {
 	}))
 	defer dest.Close()
 
+	var srcHits atomic.Int32
 	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srcHits.Add(1)
 		http.Redirect(w, r, dest.URL+"/next", http.StatusFound)
 	}))
 	defer src.Close()
 
 	_, err := NewTelegram(TelegramParams{Token: token, APIURL: src.URL})
 	require.Error(t, err, "the redirect was followed")
+	assert.Equal(t, int32(1), srcHits.Load(), "a refused redirect is not tried again")
 	assert.Empty(t, refererSeen, "the redirect target was reached and saw Referer %q", refererSeen)
 	assert.NotContains(t, err.Error(), token, "the refusal itself leaked the token")
+}
+
+// TestTelegram_RequestRetries covers which failures a call is tried again after: a reply that will not
+// change, 4xx or a body that is not JSON, is final, and a method that is not read-only, sendMessage or
+// any other, is not sent again once the request may have reached the API, or the chat gets it twice.
+func TestTelegram_RequestRetries(t *testing.T) {
+	var attempts atomic.Int32
+	var reply atomic.Pointer[string] // what the API does with every call after getMe
+	initial := "ok"
+	reply.Store(&initial)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/getMe") {
+			_, _ = w.Write([]byte(getMeResp))
+			return
+		}
+		attempts.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		switch v := *reply.Load(); v {
+		case "hang up": // the request is taken, the connection closes without an answer
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err == nil {
+				_ = conn.Close()
+			}
+		case "slow": // the request is taken, the answer comes after the client gave up
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+		case "not json":
+			_, _ = w.Write([]byte("not json"))
+		case "truncated json": // a complete answer whose JSON is cut short
+			_, _ = w.Write([]byte(`{"ok":true,"result":`))
+		case "cut body": // the answer starts, the connection closes in the middle of it
+			w.Header().Set("Content-Length", "100")
+			_, _ = w.Write([]byte(`{"ok":true,"result":`))
+			w.(http.Flusher).Flush()
+			panic(http.ErrAbortHandler)
+		case "cut after the answer": // the whole answer arrives, the connection closes before the body ends
+			w.Header().Set("Content-Length", "100")
+			_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+			w.(http.Flusher).Flush()
+			panic(http.ErrAbortHandler)
+		case "ok":
+			_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+		default:
+			code, _ := strconv.Atoi(v)
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(errorResp))
+		}
+	}))
+	defer ts.Close()
+	tb, err := NewTelegram(TelegramParams{Token: "good-token", Timeout: 5 * time.Second, apiPrefix: ts.URL + "/"})
+	require.NoError(t, err)
+
+	tbl := []struct {
+		reply          string
+		updates, sends int32 // attempts for getUpdates, a read-only method, and for any other method
+	}{
+		{reply: "ok", updates: 1, sends: 1},
+		{reply: "400", updates: 1, sends: 1},
+		{reply: "401", updates: 1, sends: 1},
+		{reply: "403", updates: 1, sends: 1},
+		{reply: "404", updates: 1, sends: 1},
+		{reply: "not json", updates: 1, sends: 1},
+		{reply: "truncated json", updates: 1, sends: 1},
+		{reply: "cut body", updates: 3, sends: 1},
+		{reply: "cut after the answer", updates: 1, sends: 1},
+		{reply: "429", updates: 3, sends: 3},
+		{reply: "500", updates: 3, sends: 1},
+		{reply: "502", updates: 3, sends: 1},
+		{reply: "hang up", updates: 3, sends: 1},
+		{reply: "slow", updates: 3, sends: 1},
+	}
+	for _, tt := range tbl {
+		t.Run(tt.reply, func(t *testing.T) {
+			reply.Store(&tt.reply)
+			tb.Timeout = 5 * time.Second
+			if tt.reply == "slow" {
+				tb.Timeout = 200 * time.Millisecond // the server never answers in time
+			}
+
+			wantOK := tt.reply == "ok" || tt.reply == "cut after the answer"
+			attempts.Store(0)
+			_, err := tb.getUpdates(context.Background())
+			assert.Equal(t, wantOK, err == nil, "getUpdates error: %v", err)
+			if tt.reply == "hang up" {
+				// net/http itself sends a GET again when a reused connection closes without an answer
+				assert.GreaterOrEqual(t, attempts.Load(), tt.updates, "getUpdates attempts")
+			} else {
+				assert.Equal(t, tt.updates, attempts.Load(), "getUpdates attempts")
+			}
+
+			attempts.Store(0)
+			err = tb.Send(context.Background(), "telegram:1", "text")
+			assert.Equal(t, wantOK, err == nil, "Send error: %v", err)
+			assert.Equal(t, tt.sends, attempts.Load(), "sendMessage attempts of Send")
+
+			// the reply to a subscriber goes through sendMessage as well
+			attempts.Store(0)
+			err = tb.sendText(context.Background(), 1, "text")
+			assert.Equal(t, wantOK, err == nil, "sendText error: %v", err)
+			assert.Equal(t, tt.sends, attempts.Load(), "sendMessage attempts of sendText")
+
+			// a method other than sendMessage that changes something, as the API's own name says
+			attempts.Store(0)
+			err = tb.Request(context.Background(), "forwardMessage?chat_id=1", []byte(`{}`), &struct{}{})
+			assert.Equal(t, wantOK, err == nil, "forwardMessage error: %v", err)
+			assert.Equal(t, tt.sends, attempts.Load(), "forwardMessage attempts")
+
+			// a read-only method in another case, telegram takes method names in any case
+			attempts.Store(0)
+			_ = tb.Request(context.Background(), "GETUPDATES", nil, &struct{}{})
+			if tt.reply != "hang up" {
+				assert.Equal(t, tt.updates, attempts.Load(), "GETUPDATES attempts")
+			}
+		})
+	}
+}
+
+// an answer that can't be decoded into what the caller passed is not a reason to ask again
+func TestTelegram_RequestDoesNotRetryDecodeIntoBadTarget(t *testing.T) {
+	var attempts atomic.Int32
+	ts := mockTelegramServer(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+	})
+	defer ts.Close()
+	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
+	require.NoError(t, err)
+
+	require.ErrorContains(t, tb.Request(context.Background(), "getUpdates", nil, nil), "failed to decode json response")
+	assert.Equal(t, int32(1), attempts.Load())
+}
+
+// a message that could not be delivered because nothing listens is sent again
+func TestTelegram_RequestRetriesSendWhenNotConnected(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+
+	tb := &Telegram{TelegramParams: TelegramParams{Token: "good-token", Timeout: time.Second, apiPrefix: "http://" + addr + "/"}}
+	st := time.Now()
+	err = tb.Send(context.Background(), "telegram:1", "text")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connect: connection refused")
+	assert.GreaterOrEqual(t, time.Since(st), 2*250*time.Millisecond, "connection refused is tried three times")
+}
+
+func TestTelegram_SendParseMode(t *testing.T) {
+	var body []byte
+	ts := mockTelegramServer(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"ok":true,"result":{}}`))
+	})
+	defer ts.Close()
+	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
+	require.NoError(t, err)
+
+	for destination, want := range map[string]string{
+		"telegram:1":                      `{"text":"a_b*c","parse_mode":"Markdown"}`,
+		"telegram:1?parseMode=":           `{"text":"a_b*c","parse_mode":"Markdown"}`,
+		"telegram:1?parseMode=HTML":       `{"text":"a_b*c","parse_mode":"HTML"}`,
+		"telegram:1?parseMode=MarkdownV2": `{"text":"a_b*c","parse_mode":"MarkdownV2"}`,
+		"telegram:1?parseMode=none":       `{"text":"a_b*c"}`,
+		"telegram:1?parseMode=None":       `{"text":"a_b*c"}`,
+		"telegram:channel?parseMode=none": `{"text":"a_b*c"}`,
+		"telegram:-100123?parseMode=NONE": `{"text":"a_b*c"}`,
+	} {
+		t.Run(destination, func(t *testing.T) {
+			body = nil
+			require.NoError(t, tb.Send(context.Background(), destination, "a_b*c"))
+			assert.JSONEq(t, want, string(body))
+		})
+	}
+}
+
+func TestTelegram_SupportedHTMLKeepsLines(t *testing.T) {
+	tbl := []struct{ in, out string }{
+		{"<p>one</p><p>two</p>line<br>break", "one\ntwo\nline\nbreak"},
+		{"line<br/>break", "line\nbreak"},
+		{"a<br><br>b", "a\n\nb"},
+		{"<ul><li>item</li></ul>", "item"},
+		{"<ul><li>a</li><li>b</li></ul>after", "a\nb\nafter"},
+		{"<p>one</p><p><b>two</b></p>", "one\n<b>two</b>"},
+		{"<blockquote><p>one</p><p>two</p></blockquote>after", "<blockquote>one\ntwo</blockquote>\nafter"},
+		{"<h1>Title</h1><p>text</p>", "<b>Title</b>text"},
+		{"<p>end</p>", "end"},
+		{"<p>one<!-- note --></p>two", "one\ntwo"},
+		{"one</br>two", "one\ntwo"},
+		// a newline already in the source is not doubled
+		{"<p>one</p>\n<p>two</p>\n", "one\ntwo"},
+		{"<p>one</p>\n\n<p>two</p>\n", "one\n\ntwo"},
+		{"<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n", "\na\nb"},
+		{"line<br>\nbreak", "line\nbreak"},
+		{"line<br>\r\nbreak", "line\nbreak"},
+	}
+	for _, tt := range tbl {
+		t.Run(tt.in, func(t *testing.T) {
+			assert.Equal(t, tt.out, TelegramSupportedHTML(tt.in))
+		})
+	}
+}
+
+// net/http sends a GET again by itself when a reused connection closes without an answer, so a message
+// sent with GET could arrive twice
+func TestTelegram_RequestMethod(t *testing.T) {
+	type seen struct{ method, contentType, body string }
+	got := make(chan seen, 1)
+	ts := mockTelegramServer(func(w http.ResponseWriter, r *http.Request) {
+		// getMe of NewTelegram is answered by mockTelegramServer and does not get here
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		got <- seen{method: r.Method, contentType: r.Header.Get("Content-Type"), body: string(body)}
+		_, _ = w.Write([]byte(`{"ok":true,"result":{}}`))
+	})
+	defer ts.Close()
+	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
+	require.NoError(t, err)
+
+	tbl := []struct {
+		name, method string
+		body         []byte
+		want         seen
+	}{
+		{name: "get method without a body", method: "getUpdates?offset=1", want: seen{method: http.MethodGet}},
+		{name: "get method in another case", method: "GETME?x=1", want: seen{method: http.MethodGet}},
+		{name: "other method without a body", method: "sendMessage?chat_id=1&text=a", want: seen{method: http.MethodPost}},
+		{name: "method named like get", method: "ge?x=1", want: seen{method: http.MethodPost}},
+		{name: "get method with a body", method: "getChat", body: []byte(`{"chat_id":1}`),
+			want: seen{method: http.MethodPost, contentType: "application/json; charset=utf-8", body: `{"chat_id":1}`}},
+		{name: "other method with a body", method: "sendMessage", body: []byte(`{"text":"a"}`),
+			want: seen{method: http.MethodPost, contentType: "application/json; charset=utf-8", body: `{"text":"a"}`}},
+	}
+	for _, tt := range tbl {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, tb.Request(context.Background(), tt.method, tt.body, &struct{}{}))
+			assert.Equal(t, tt.want, <-got)
+		})
+	}
+}
+
+func TestTelegram_SendMessageNotRepeatedOnLostAnswer(t *testing.T) {
+	var sends atomic.Int32
+	ts := mockTelegramServer(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(strings.ToLower(r.URL.Path), "sendmessage") {
+			_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+			return
+		}
+		sends.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		// the message is taken, the connection closes without an answer
+		if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+			_ = conn.Close()
+		}
+	})
+	defer ts.Close()
+	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
+	require.NoError(t, err)
+
+	for name, send := range map[string]func() error{
+		"Send":     func() error { return tb.Send(context.Background(), "telegram:1", "text") },
+		"sendText": func() error { return tb.sendText(context.Background(), 1, "text") },
+		// telegram takes method names in any case
+		"Request in lower case": func() error {
+			return tb.Request(context.Background(), "sendmessage?chat_id=1", []byte(`{"text":"text"}`), &struct{}{})
+		},
+		// without a body the parameters travel in the query, as sendText sent them before
+		"Request without a body": func() error {
+			return tb.Request(context.Background(), "sendMessage?chat_id=1&text=text", nil, &struct{}{})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// a successful call leaves an idle connection, which the message then goes over
+			_, err := tb.getUpdates(context.Background())
+			require.NoError(t, err)
+			sends.Store(0)
+			require.Error(t, send())
+			assert.Equal(t, int32(1), sends.Load(), "sendMessage requests received")
+		})
+	}
 }

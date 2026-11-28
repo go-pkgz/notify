@@ -45,12 +45,31 @@ func NewWebhook(params WebhookParams) *Webhook {
 		res.Timeout = webhookTimeOut
 	}
 
-	res.webhookClient = &http.Client{Timeout: res.Timeout}
+	res.webhookClient = &http.Client{Timeout: res.Timeout, CheckRedirect: webhookCheckRedirect}
 
 	return res
 }
 
+// webhookCheckRedirect applies the redirect rules of Send. The host name is compared exactly:
+// some Go releases drop Authorization and Cookie on a redirect that changes only its letter case,
+// and a Unicode case fold joins names that DNS keeps apart.
+func webhookCheckRedirect(req *http.Request, via []*http.Request) error {
+	switch {
+	case req.Response.StatusCode != http.StatusTemporaryRedirect && req.Response.StatusCode != http.StatusPermanentRedirect:
+	case req.URL.Hostname() != via[0].URL.Hostname():
+	case via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme != "https":
+	case len(via) > 10: // via holds the first request and every redirect followed before this one
+	default:
+		return nil
+	}
+	return http.ErrUseLastResponse
+}
+
 // Send sends Webhook notification. Destination field is expected to have http:// or https:// schema.
+// The text is sent as the body of a POST request. A response status outside 2xx is returned as an error.
+// A 307 or 308 to the same host name, spelled the same, is followed up to 10 times with the same body and
+// Headers, on any port and from http to https, never from https to http; any other redirect is returned
+// as an error.
 //
 // Example:
 //
@@ -95,7 +114,7 @@ func (wh *Webhook) Send(ctx context.Context, destination, text string) error {
 	return nil
 }
 
-// Schema returns schema prefix supported by this client
+// Schema returns the scheme supported by this client, without the colon
 func (wh *Webhook) Schema() string {
 	return "http"
 }

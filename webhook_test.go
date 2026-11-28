@@ -9,7 +9,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -170,13 +173,13 @@ func TestWebhook_SendLimitsErrorBody(t *testing.T) {
 }
 
 func TestWebhook_SendReusesConnection(t *testing.T) {
-	var newConns int32
+	var newConns atomic.Int32
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(strings.Repeat("b", 1024)))
 	}))
 	ts.Config.ConnState = func(_ net.Conn, state http.ConnState) {
 		if state == http.StateNew {
-			atomic.AddInt32(&newConns, 1)
+			newConns.Add(1)
 		}
 	}
 	ts.Start()
@@ -188,5 +191,92 @@ func TestWebhook_SendReusesConnection(t *testing.T) {
 	for range 3 {
 		require.NoError(t, wh.Send(context.Background(), ts.URL, "some_text"))
 	}
-	assert.Equal(t, int32(1), atomic.LoadInt32(&newConns), "response body is drained, so the connection is reused")
+	assert.Equal(t, int32(1), newConns.Load(), "response body is drained, so the connection is reused")
+}
+
+func TestWebhook_SendRedirects(t *testing.T) {
+	type landing struct{ method, body, header string }
+	var mu sync.Mutex
+	var landed []landing
+	var hops atomic.Int32
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		hops.Add(1)
+		if r.URL.Path == "/landed" {
+			body, err := io.ReadAll(r.Body)
+			assert.NoError(t, err)
+			mu.Lock()
+			landed = append(landed, landing{method: r.Method, body: string(body), header: r.Header.Get("Authorization")})
+			mu.Unlock()
+			return
+		}
+		// /hop?code=<code>&n=<n>&to=<target> redirects with code to target, after n hops to itself
+		q := r.URL.Query()
+		code, _ := strconv.Atoi(q.Get("code"))
+		if n, _ := strconv.Atoi(q.Get("n")); n > 0 {
+			q.Set("n", strconv.Itoa(n-1))
+			http.Redirect(w, r, "/hop?"+q.Encode(), code) //nolint:gosec // G710: a local test server redirecting where the test asks
+			return
+		}
+		http.Redirect(w, r, q.Get("to"), code) //nolint:gosec // G710: a local test server redirecting where the test asks
+	}
+	plain := httptest.NewServer(http.HandlerFunc(handler))
+	defer plain.Close()
+	secure := httptest.NewTLSServer(http.HandlerFunc(handler))
+	defer secure.Close()
+	// the same server under another host name: localhost and 127.0.0.1 are different hosts to the client
+	otherHost := strings.Replace(plain.URL, "127.0.0.1", "localhost", 1)
+
+	wh := NewWebhook(WebhookParams{Headers: []string{"Authorization: Bearer secret"}})
+	// trust the TLS test server, keep the client as NewWebhook made it otherwise
+	wh.webhookClient.(*http.Client).Transport = secure.Client().Transport
+
+	redirect := func(base string, code, extraHops int, target string) string {
+		return base + "/hop?" + url.Values{"code": {strconv.Itoa(code)}, "n": {strconv.Itoa(extraHops)}, "to": {target}}.Encode()
+	}
+	tbl := []struct {
+		name, destination string
+		followed          bool
+		code              int
+		requests          int32 // requests the servers receive, checked when set
+	}{
+		{name: "307 on the same host", destination: redirect(plain.URL, 307, 0, "/landed"), followed: true},
+		{name: "308 on the same host", destination: redirect(plain.URL, 308, 0, "/landed"), followed: true},
+		{name: "308 from http to https on the same host", destination: redirect(plain.URL, 308, 0, secure.URL+"/landed"), followed: true},
+		{name: "ten 307s", destination: redirect(plain.URL, 307, 9, "/landed"), followed: true, requests: 11},
+		{name: "eleven 307s", destination: redirect(plain.URL, 307, 10, "/landed"), code: 307, requests: 11},
+		{name: "301", destination: redirect(plain.URL, 301, 0, "/landed"), code: 301},
+		{name: "302", destination: redirect(plain.URL, 302, 0, "/landed"), code: 302},
+		{name: "303", destination: redirect(plain.URL, 303, 0, "/landed"), code: 303},
+		{name: "307 to another host", destination: redirect(plain.URL, 307, 0, otherHost+"/landed"), code: 307},
+		{name: "308 to another host", destination: redirect(plain.URL, 308, 0, otherHost+"/landed"), code: 308},
+		{name: "307 to the host name in other letter case",
+			destination: redirect(otherHost, 307, 0, strings.Replace(otherHost, "localhost", "LOCALHOST", 1)+"/landed"), code: 307},
+		{name: "307 from https to http", destination: redirect(secure.URL, 307, 0, plain.URL+"/landed"), code: 307},
+		{name: "308 to another host after a same-host one",
+			destination: redirect(plain.URL, 308, 0, redirect("", 308, 0, otherHost+"/landed")), code: 308},
+	}
+	for _, tt := range tbl {
+		t.Run(tt.name, func(t *testing.T) {
+			hops.Store(0)
+			mu.Lock()
+			landed = nil
+			mu.Unlock()
+			err := wh.Send(context.Background(), tt.destination, "payload")
+			if tt.requests != 0 {
+				assert.Equal(t, tt.requests, hops.Load(), "requests received")
+			}
+			if tt.followed {
+				require.NoError(t, err)
+				mu.Lock()
+				defer mu.Unlock()
+				assert.Equal(t, []landing{{method: http.MethodPost, body: "payload", header: "Bearer secret"}}, landed)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "webhook request failed with non-OK status code: "+strconv.Itoa(tt.code))
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Empty(t, landed, "the redirect target is not reached")
+		})
+	}
 }

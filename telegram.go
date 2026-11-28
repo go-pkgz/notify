@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"strconv"
@@ -24,7 +25,7 @@ import (
 type TelegramParams struct {
 	Token                string        // token for telegram bot API interactions
 	Timeout              time.Duration // http client timeout
-	ErrorMsg, SuccessMsg string        // messages for successful and unsuccessful subscription requests to bot
+	ErrorMsg, SuccessMsg string        // messages for unsuccessful and successful subscription requests to bot
 
 	// APIURL points the client at something other than the public bot API, for a proxy standing in
 	// front of Telegram or a test double answering as it. Empty means the public API. Every request
@@ -125,14 +126,15 @@ func NewTelegram(params TelegramParams) (*Telegram, error) {
 	return &res, nil
 }
 
-// Send sends provided message to Telegram chat, with `parseMode` parsed from destination field (Markdown by default)
-// with "telegram:" schema same way "mailto:" schema is constructed.
+// Send sends provided message to Telegram chat, with `parseMode` parsed from destination field (Markdown by default,
+// "none" for plain text) with "telegram:" schema same way "mailto:" schema is constructed.
 //
 // Example:
 //
 // - telegram:channel
 // - telegram:chatID // chatID is a number, like `-1001480738202`
 // - telegram:channel?parseMode=HTML
+// - telegram:channel?parseMode=none
 func (t *Telegram) Send(ctx context.Context, destination, text string) error {
 	chatID, parseMode, err := t.parseDestination(destination)
 	if err != nil {
@@ -149,7 +151,8 @@ func (t *Telegram) Send(ctx context.Context, destination, text string) error {
 	return t.Request(ctx, url, b, &struct{}{})
 }
 
-// TelegramSupportedHTML returns HTML with only tags allowed in Telegram HTML message payload, also trims ending newlines
+// TelegramSupportedHTML returns HTML with only tags allowed in Telegram HTML message payload, also trims ending newlines.
+// The end of a paragraph or a list item and a line break become a newline, h1-h3 become <b> and h4-h6 become <i><b>.
 //
 // https://core.telegram.org/bots/api#html-style, https://core.telegram.org/api/entities#allowed-entities
 func TelegramSupportedHTML(htmlText string) string {
@@ -175,39 +178,63 @@ func EscapeTelegramText(text string) string {
 	return text
 }
 
+// telegramHeadings maps the heading tags telegram does not allow to the opening and closing tags replacing them
+var telegramHeadings = map[string][2]string{
+	"h1": {"<b>", "</b>"}, "h2": {"<b>", "</b>"}, "h3": {"<b>", "</b>"},
+	"h4": {"<i><b>", "</b></i>"}, "h5": {"<i><b>", "</b></i>"}, "h6": {"<i><b>", "</b></i>"},
+}
+
 // telegram not allow h1-h6 tags
-// replace these tags with a combination of <b> and <i> for visual distinction
+// replace these tags with a combination of <b> and <i> for visual distinction.
+// telegram has no paragraphs, line breaks or lists either, and their tags are stripped, so the end of
+// a paragraph or a list item and a line break are turned into a newline, unless the source already
+// has one there.
 func adjustHTMLTags(htmlText string) string {
 	buff := strings.Builder{}
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlText))
+	newlinePending := false // a block ended, the next text or opening tag starts on a new line
 	for {
 		if tokenizer.Next() == html.ErrorToken {
 			return buff.String()
 		}
 		token := tokenizer.Token()
 		switch token.Type {
-		case html.StartTagToken, html.EndTagToken:
-			switch token.Data {
-			case "h1", "h2", "h3":
-				if token.Type == html.StartTagToken {
-					_, _ = buff.WriteString("<b>")
-				}
-				if token.Type == html.EndTagToken {
-					_, _ = buff.WriteString("</b>")
-				}
-			case "h4", "h5", "h6":
-				if token.Type == html.StartTagToken {
-					_, _ = buff.WriteString("<i><b>")
-				}
-				if token.Type == html.EndTagToken {
-					_, _ = buff.WriteString("</b></i>")
-				}
-			default:
-				_, _ = buff.WriteString(token.String())
+		case html.TextToken:
+			// the tokenizer has already turned "\r\n" into "\n"
+			if newlinePending && !strings.HasPrefix(token.Data, "\n") {
+				_, _ = buff.WriteString("\n")
 			}
+			newlinePending = false
+			_, _ = buff.WriteString(token.String())
+		case html.StartTagToken, html.SelfClosingTagToken:
+			if newlinePending {
+				_, _ = buff.WriteString("\n")
+			}
+			newlinePending = token.Data == "br"
+			_, _ = buff.WriteString(telegramTag(token))
+		case html.EndTagToken:
+			newlinePending = newlinePending || token.Data == "p" || token.Data == "li" || token.Data == "br"
+			_, _ = buff.WriteString(telegramTag(token))
 		default:
 			_, _ = buff.WriteString(token.String())
 		}
+	}
+}
+
+// telegramTag returns a tag as it goes to the sanitizer: a heading replaced, a line break dropped, as
+// adjustHTMLTags turns it into a newline, and anything else unchanged
+func telegramTag(token html.Token) string {
+	if token.Data == "br" {
+		return ""
+	}
+	repl, ok := telegramHeadings[token.Data]
+	switch {
+	case ok && token.Type == html.StartTagToken:
+		return repl[0]
+	case ok && token.Type == html.EndTagToken:
+		return repl[1]
+	default:
+		return token.String()
 	}
 }
 
@@ -242,7 +269,8 @@ func (t *Telegram) AddToken(token, user, site string, expires time.Time) {
 	t.requests.Unlock()
 }
 
-// CheckToken verifies incoming token, returns the user address if it's confirmed and empty string otherwise
+// CheckToken returns the Telegram chat ID and the site of a confirmed token, and consumes it;
+// otherwise it returns an error
 func (t *Telegram) CheckToken(token, user string) (telegram, site string, err error) {
 	// lookup and consumption are a single transaction, so the one-time token can't be used twice
 	t.requests.Lock()
@@ -271,8 +299,8 @@ func (t *Telegram) CheckToken(token, user string) (telegram, site string, err er
 	return authRequest.telegramID, authRequest.site, nil
 }
 
-// Run starts processing login requests sent in Telegram, required for user notifications to work
-// Blocks caller
+// Run starts processing login requests sent in Telegram, required for users to subscribe through the bot;
+// not needed for Send. Blocks caller
 func (t *Telegram) Run(ctx context.Context) {
 	t.updates.Lock()
 	if t.updates.running {
@@ -349,7 +377,7 @@ func (t *Telegram) ProcessUpdate(ctx context.Context, textUpdate string) error {
 	return nil
 }
 
-// Schema returns schema prefix supported by this client
+// Schema returns the scheme supported by this client, without the colon
 func (t *Telegram) Schema() string {
 	return "telegram"
 }
@@ -375,9 +403,13 @@ func (t *Telegram) parseDestination(destination string) (chatID, parseMode strin
 		chatID = "@" + chatID // if chatID not a number enforce @ prefix
 	}
 
-	parseMode = "Markdown"
-	if u.Query().Get("parseMode") != "" {
-		parseMode = u.Query().Get("parseMode")
+	switch mode := u.Query().Get("parseMode"); {
+	case strings.EqualFold(mode, "none"):
+		parseMode = "" // plain text, parse_mode is left out of the request
+	case mode != "":
+		parseMode = mode
+	default:
+		parseMode = "Markdown"
 	}
 
 	return chatID, parseMode, nil
@@ -446,9 +478,11 @@ func (t *Telegram) processUpdates(ctx context.Context, updates *TelegramUpdate) 
 }
 
 // sendText sends a plain text message to telegram peer
+// It is a POST, as in Send: net/http itself sends a GET again when a reused connection closes without
+// an answer, and a repeated sendMessage delivers the message twice.
 func (t *Telegram) sendText(ctx context.Context, recipientID int, msg string) error {
-	url := fmt.Sprintf("sendMessage?chat_id=%d&text=%s", recipientID, neturl.QueryEscape(msg))
-	return t.Request(ctx, url, nil, &struct{}{})
+	b, _ := json.Marshal(telegramMsg{Text: msg}) // a struct of strings always marshals
+	return t.Request(ctx, fmt.Sprintf("sendMessage?chat_id=%d", recipientID), b, &struct{}{})
 }
 
 // botInfo returns info about configured bot
@@ -507,16 +541,48 @@ func validateTelegramBaseURL(baseURL string) (string, error) {
 	return u.String(), nil
 }
 
-// Request makes a request to the Telegram API and return the result
+// errTelegramRedirect is the refusal of a redirect from the Telegram API, see Request
+var errTelegramRedirect = errors.New("refusing to follow a telegram api redirect: the bot token travels in the URL")
+
+// Request makes a request to the Telegram API and return the result.
+//
+// A non-nil b is sent as the JSON body of a POST. Without a body, a method that only reads, one whose
+// name starts with "get", is sent as GET and any other method as POST with an empty body, its
+// parameters in the query of method either way.
+//
+// Timeout applies to each attempt. A call is tried up to three times, 250ms apart, when the API answers
+// with 429 or the TCP connection to it can't be opened, as when it is refused or the name does not
+// resolve. A method that only reads, one whose name starts with "get" such as getMe and getUpdates, is
+// also tried again after any other transport failure, including a timeout and one while the answer is
+// read, and after a 5xx answer. Anything else is returned at once: once a request such as sendMessage
+// may have reached Telegram, as after a timeout or a 5xx, another attempt could deliver the message
+// twice. A failed connection through a proxy, or one cut short by Timeout, is not told apart from such
+// a case.
+//
+// An answer whose JSON decodes in full is a success even when the connection breaks after it, before
+// the body ends.
 func (t *Telegram) Request(ctx context.Context, method string, b []byte, data any) error {
-	return repeater.NewFixed(3, time.Millisecond*250).Do(ctx, func() error {
+	methodName, _, _ := strings.Cut(method, "?")
+	// telegram method names are case-insensitive, and the read-only ones are named get...
+	readOnly := len(methodName) >= 3 && strings.EqualFold(methodName[:3], "get")
+
+	retry := false // set by every attempt, read by the classifier right after it
+	rpt := repeater.NewFixed(3, time.Millisecond*250)
+	rpt.SetErrorClassifier(func(error) bool { return retry })
+	return rpt.Do(ctx, func() error {
+		retry = false
 		url := fmt.Sprintf("%s%s/%s", t.apiPrefix, t.Token, method)
 
+		// net/http itself sends a GET again when a reused connection closes before an answer, and a
+		// repeated sendMessage delivers the message twice, so only a read-only method goes as GET
 		var req *http.Request
 		var err error
-		if b == nil {
+		switch {
+		case b == nil && readOnly:
 			req, err = http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
-		} else {
+		case b == nil:
+			req, err = http.NewRequestWithContext(ctx, "POST", url, http.NoBody)
+		default:
 			req, err = http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 		}
 		if err != nil {
@@ -533,25 +599,46 @@ func (t *Telegram) Request(ctx context.Context, method string, b []byte, data an
 		client := http.Client{
 			Timeout: t.Timeout,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return errors.New("refusing to follow a telegram api redirect: the bot token travels in the URL")
+				return errTelegramRedirect
 			},
 		}
 		resp, err := client.Do(req)
 		if err != nil {
+			// a refused redirect would be refused again, and a method that is not read-only is sent again
+			// only when the connection could not be made, so the request never left
+			retry = !errors.Is(err, errTelegramRedirect) && (readOnly || t.connectFailed(err))
 			return fmt.Errorf("failed to send request: %w", t.redactToken(err))
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			// 429 means the request was not processed; a 5xx may come after a message was taken
+			retry = resp.StatusCode == http.StatusTooManyRequests ||
+				(readOnly && resp.StatusCode >= http.StatusInternalServerError)
 			return t.redactToken(t.parseError(resp.Body, resp.StatusCode))
 		}
 
-		if err = json.NewDecoder(resp.Body).Decode(data); err != nil {
-			return fmt.Errorf("failed to decode json response: %w", err)
+		// read in full before decoding, so a read failure is told apart from JSON that is not valid, which
+		// another attempt would not change; an answer that decodes is a success even if reading the rest
+		// of the body failed
+		body, readErr := io.ReadAll(resp.Body)
+		if err = json.NewDecoder(bytes.NewReader(body)).Decode(data); err == nil {
+			return nil
 		}
-
-		return nil
+		if readErr != nil {
+			retry = readOnly
+			return fmt.Errorf("failed to decode json response: %w", readErr)
+		}
+		return fmt.Errorf("failed to decode json response: %w", err)
 	})
+}
+
+// connectFailed reports whether a request failed because the direct connection to the server could not
+// be made, including the name lookup, so nothing of the request was sent. A failed dial to a proxy and a
+// dial stopped by the client timeout come back as other errors and are not recognized.
+func (t *Telegram) connectFailed(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
 }
 
 // redactToken removes the bot token from an error before it reaches a caller's log.
@@ -623,7 +710,7 @@ func looksLikeBotToken(token string) bool {
 func tokenRecoverable(msg, token string) bool {
 	lowered := strings.ToLower(token)
 	seen := msg
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		if strings.Contains(strings.ToLower(seen), lowered) {
 			return true
 		}
