@@ -76,7 +76,6 @@ func TestSend_SchemeMatch(t *testing.T) {
 	}
 	require.EqualError(t, Send(context.Background(), nil, "mailto:a@example.org", ""), "unsupported destination schema: mailto")
 
-	// a schema given with its separator matched only its own scheme as a prefix, so it still does
 	separated := []Notifier{schemeNotifier{name: "plain", schema: "http://"}, schemeNotifier{name: "secure", schema: "https://"}}
 	require.EqualError(t, Send(context.Background(), separated, "http://example.org", ""), "sent by plain")
 	require.EqualError(t, Send(context.Background(), separated, "https://example.org", ""), "sent by secure")

@@ -89,8 +89,10 @@ func NewEmail(smtpParams SMTPParams) *Email {
 //
 // Note: query parameter values in the mailto URL must be properly URL-encoded. In particular, email addresses
 // containing "+" (e.g. "noreply+tag@example.com") must use "%2B" instead, otherwise "+" is interpreted as a space
-// per standard URL query string parsing. Use url.QueryEscape for all parameter values. Recipients before "?"
-// are percent-decoded, see decodeRecipient.
+// per standard URL query string parsing. Use url.QueryEscape for all parameter values. The address of each
+// recipient before "?" is percent-decoded, so "a%2Btag@example.org" goes to "a+tag@example.org", and a
+// display name is used as written; an address that is not valid percent-encoding is used as written, and
+// one that does not decode to a single plain address is refused.
 //
 // Example:
 //
@@ -111,7 +113,7 @@ func (e *Email) Send(ctx context.Context, destination, text string) error {
 	return err
 }
 
-// Schema returns schema prefix supported by this client
+// Schema returns the scheme supported by this client, without the colon
 func (e *Email) Schema() string {
 	return "mailto"
 }
@@ -153,7 +155,7 @@ func (e *Email) parseDestination(destination string) (email.Params, error) {
 	}
 	destinations := []string{}
 	for _, addr := range addresses {
-		if addr.Address, err = decodeRecipient(addr.Address); err != nil {
+		if addr.Address, err = e.decodeRecipient(addr.Address); err != nil {
 			return email.Params{}, fmt.Errorf("problem parsing email recipients: %w", err)
 		}
 		stringAddr := addr.String()
@@ -182,7 +184,7 @@ func (e *Email) parseDestination(destination string) (email.Params, error) {
 // such as "user%host@relay.example.org", is returned as written. A decoded address must still be one
 // plain address on its own, so an encoded comma or angle bracket can't change who receives the message;
 // an encoded quoted local part is refused for the same reason.
-func decodeRecipient(address string) (string, error) {
+func (e *Email) decodeRecipient(address string) (string, error) {
 	decoded, err := url.PathUnescape(address)
 	if err != nil || decoded == address {
 		return address, nil // not percent-encoded, used as written

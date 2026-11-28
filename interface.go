@@ -44,8 +44,8 @@ func Send(ctx context.Context, notifiers []Notifier, destination, text string) e
 }
 
 // schemeMatches reports whether a destination with the given scheme goes to a notifier with the given schema.
-// A schema reported with its separator, as "mailto:" or "https://", matches as well. A bare "http" also
-// takes https, as the prefix it was; "http:" and "http://" never did.
+// The comparison ignores case and a trailing ":" or "://" on the schema, so "mailto:" and "https://" match
+// as well. A bare "http" also takes https; "http:" and "http://" take only http.
 func schemeMatches(scheme, schema string) bool {
 	if strings.EqualFold(schema, "http") && strings.EqualFold(scheme, "https") {
 		return true

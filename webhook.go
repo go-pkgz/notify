@@ -50,16 +50,11 @@ func NewWebhook(params WebhookParams) *Webhook {
 	return res
 }
 
-// webhookCheckRedirect follows a 307 or 308 that stays on the host name of the first request, spelled the
-// same, on any port, up to 10 redirects; it may move from http to https, never from https to http. A 307 or 308 keeps the POST,
-// its body and the Headers, which can carry credentials, so they go to no other host. The name is compared
-// exactly: one that differs only in letter case counts as another host, as some Go releases drop
-// Authorization and Cookie on such a redirect, and a Unicode case fold can join two different names. A 301, 302 or 303 turns the POST into
-// a GET without the text, and the answer to that GET says nothing about the delivery. A redirect that is
-// not followed reaches Send as the 3xx response, which Send returns as an error.
+// webhookCheckRedirect applies the redirect rules of Send. The host name is compared exactly:
+// some Go releases drop Authorization and Cookie on a redirect that changes only its letter case,
+// and a Unicode case fold joins names that DNS keeps apart.
 func webhookCheckRedirect(req *http.Request, via []*http.Request) error {
 	switch {
-	case req.Response == nil: // net/http always sets it on a redirect; without it the status is unknown
 	case req.Response.StatusCode != http.StatusTemporaryRedirect && req.Response.StatusCode != http.StatusPermanentRedirect:
 	case req.URL.Hostname() != via[0].URL.Hostname():
 	case via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme != "https":
@@ -119,7 +114,7 @@ func (wh *Webhook) Send(ctx context.Context, destination, text string) error {
 	return nil
 }
 
-// Schema returns schema prefix supported by this client
+// Schema returns the scheme supported by this client, without the colon
 func (wh *Webhook) Schema() string {
 	return "http"
 }

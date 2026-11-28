@@ -377,7 +377,7 @@ func (t *Telegram) ProcessUpdate(ctx context.Context, textUpdate string) error {
 	return nil
 }
 
-// Schema returns schema prefix supported by this client
+// Schema returns the scheme supported by this client, without the colon
 func (t *Telegram) Schema() string {
 	return "telegram"
 }
@@ -606,7 +606,7 @@ func (t *Telegram) Request(ctx context.Context, method string, b []byte, data an
 		if err != nil {
 			// a refused redirect would be refused again, and a method that is not read-only is sent again
 			// only when the connection could not be made, so the request never left
-			retry = !errors.Is(err, errTelegramRedirect) && (readOnly || connectFailed(err))
+			retry = !errors.Is(err, errTelegramRedirect) && (readOnly || t.connectFailed(err))
 			return fmt.Errorf("failed to send request: %w", t.redactToken(err))
 		}
 		defer resp.Body.Close()
@@ -636,7 +636,7 @@ func (t *Telegram) Request(ctx context.Context, method string, b []byte, data an
 // connectFailed reports whether a request failed because the direct connection to the server could not
 // be made, including the name lookup, so nothing of the request was sent. A failed dial to a proxy and a
 // dial stopped by the client timeout come back as other errors and are not recognized.
-func connectFailed(err error) bool {
+func (t *Telegram) connectFailed(err error) bool {
 	var opErr *net.OpError
 	return errors.As(err, &opErr) && opErr.Op == "dial"
 }

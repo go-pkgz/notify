@@ -51,7 +51,7 @@ func (s *Slack) Send(ctx context.Context, destination, text string) error {
 	return err
 }
 
-// Schema returns schema prefix supported by this client
+// Schema returns the scheme supported by this client, without the colon
 func (s *Slack) Schema() string {
 	return "slack"
 }
@@ -72,7 +72,7 @@ func (s *Slack) parseDestination(ctx context.Context, destination string) (strin
 		return "", slack.Attachment{}, fmt.Errorf("unsupported scheme %s, should be slack", u.Scheme)
 	}
 	channelID := u.Opaque
-	if !isSlackID(u.Opaque) {
+	if !s.isSlackID(u.Opaque) {
 		channelID, err = s.findChannelIDByName(ctx, u.Opaque)
 		if err != nil {
 			return "", slack.Attachment{}, fmt.Errorf("problem retrieving channel ID for #%s: %w", u.Opaque, err)
@@ -90,7 +90,7 @@ func (s *Slack) parseDestination(ctx context.Context, destination string) (strin
 // isSlackID reports whether destination is a Slack ID: C for a channel, G for a private channel or
 // a group conversation, D for a direct message, U or W for a user, followed by upper-case letters
 // and digits. Channel names are lower-case, so they never take this shape.
-func isSlackID(destination string) bool {
+func (s *Slack) isSlackID(destination string) bool {
 	if len(destination) < 2 || !strings.ContainsRune("CGDUW", rune(destination[0])) {
 		return false
 	}
