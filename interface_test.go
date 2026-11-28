@@ -84,6 +84,26 @@ func TestSend_SchemeMatch(t *testing.T) {
 		"unsupported destination schema: https")
 }
 
+func TestSend_EmptySchemaTakesTheRest(t *testing.T) {
+	notifiers := []Notifier{
+		schemeNotifier{name: "first catch-all", schema: ""},
+		schemeNotifier{name: "slack", schema: "slack"},
+		schemeNotifier{name: "second catch-all", schema: ""},
+	}
+	for destination, want := range map[string]string{
+		"slack:general":       "sent by slack",
+		"telegram:channel":    "sent by first catch-all",
+		"no scheme":           "sent by first catch-all",
+		"":                    "sent by first catch-all",
+		"SLACK:general":       "sent by slack",
+		"https://example.org": "sent by first catch-all",
+	} {
+		t.Run(destination, func(t *testing.T) {
+			require.EqualError(t, Send(context.Background(), notifiers, destination, ""), want)
+		})
+	}
+}
+
 // the notifiers parse the destination themselves, so an upper-case scheme has to pass there as well
 func TestSend_UpperCaseSchemeReachesNotifier(t *testing.T) {
 	hook := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

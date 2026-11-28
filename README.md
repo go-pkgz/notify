@@ -25,7 +25,7 @@ type Notifier interface {
 }
 ```
 
-`notify.Send` passes the destination to the first notifier whose scheme matches the scheme of the destination, compared case-insensitively, and returns its error; the other notifiers are not tried. A notifier with the `http` scheme also takes `https` destinations. With no match, `notify.Send` returns an `unsupported destination schema: <scheme>` error. Example on how to use it:
+`notify.Send` passes the destination to the first notifier whose scheme matches the scheme of the destination, compared case-insensitively, and returns its error; the other notifiers are not tried. A notifier with the `http` scheme also takes `https` destinations. A notifier whose `Schema()` is empty takes every destination that no other notifier matches, one without a scheme included; the first such notifier is used. With no match, `notify.Send` returns an `unsupported destination schema: <scheme>` error. Example on how to use it:
 
 ```go
 package main
