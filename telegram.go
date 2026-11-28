@@ -707,7 +707,7 @@ func looksLikeBotToken(token string) bool {
 func tokenRecoverable(msg, token string) bool {
 	lowered := strings.ToLower(token)
 	seen := msg
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		if strings.Contains(strings.ToLower(seen), lowered) {
 			return true
 		}

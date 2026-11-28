@@ -443,13 +443,13 @@ func TestTelegram_RequestDoesNotLeakToken(t *testing.T) {
 
 func TestTelegram_RequestKeepsDefaultTransportPool(t *testing.T) {
 	// unrelated user of http.DefaultTransport, which telegram requests should not affect
-	var newConns int32
+	var newConns atomic.Int32
 	other := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("pong"))
 	}))
 	other.Config.ConnState = func(_ net.Conn, state http.ConnState) {
 		if state == http.StateNew {
-			atomic.AddInt32(&newConns, 1)
+			newConns.Add(1)
 		}
 	}
 	other.Start()
@@ -464,7 +464,7 @@ func TestTelegram_RequestKeepsDefaultTransportPool(t *testing.T) {
 	}
 
 	call()
-	require.Equal(t, int32(1), atomic.LoadInt32(&newConns))
+	require.Equal(t, int32(1), newConns.Load())
 
 	ts := mockTelegramServer(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(getMeResp))
@@ -475,7 +475,7 @@ func TestTelegram_RequestKeepsDefaultTransportPool(t *testing.T) {
 	require.NoError(t, tb.Request(context.Background(), "getMe", nil, &struct{}{}))
 
 	call()
-	assert.Equal(t, int32(1), atomic.LoadInt32(&newConns), "idle connection of the default transport should be reused")
+	assert.Equal(t, int32(1), newConns.Load(), "idle connection of the default transport should be reused")
 }
 
 const errorResp = `{"ok":false,"error_code":400,"description":"Very bad request"}`
@@ -583,7 +583,7 @@ func TestTelegram_CheckTokenIsSingleUse(t *testing.T) {
 	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
 	require.NoError(t, err)
 
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		token := fmt.Sprintf("token-%d", i)
 		tb.AddToken(token, "user", "site", time.Now().Add(time.Minute))
 		tb.requests.Lock()
@@ -593,17 +593,17 @@ func TestTelegram_CheckTokenIsSingleUse(t *testing.T) {
 		tb.requests.data[token] = authRequest
 		tb.requests.Unlock()
 
-		var successes int32
+		var successes atomic.Int32
 		var wg sync.WaitGroup
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			wg.Go(func() {
 				if _, _, e := tb.CheckToken(token, "user"); e == nil {
-					atomic.AddInt32(&successes, 1)
+					successes.Add(1)
 				}
 			})
 		}
 		wg.Wait()
-		require.Equal(t, int32(1), atomic.LoadInt32(&successes), "one-time token should be accepted exactly once")
+		require.Equal(t, int32(1), successes.Load(), "one-time token should be accepted exactly once")
 	}
 	assert.Empty(t, tb.requests.data)
 }
@@ -616,7 +616,7 @@ func TestTelegram_ConcurrentConfirmAndCheck(t *testing.T) {
 	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
 	require.NoError(t, err)
 
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		token := fmt.Sprintf("token-%d", i)
 		tb.AddToken(token, "user", "site", time.Now().Add(time.Minute))
 
@@ -624,10 +624,10 @@ func TestTelegram_ConcurrentConfirmAndCheck(t *testing.T) {
 		raw := fmt.Sprintf(`{"result":[{"update_id":%d,"message":{"chat":{"id":313131313,"type":"private"},"text":"/start %s"}}]}`, i, token)
 		require.NoError(t, json.Unmarshal([]byte(raw), &upd))
 
-		var successes int32
+		var successes atomic.Int32
 		var wg, updates sync.WaitGroup
 		// the same update delivered twice, as it happens with duplicate update receivers
-		for j := 0; j < 2; j++ {
+		for range 2 {
 			updates.Go(func() {
 				tb.processUpdates(context.Background(), &upd)
 			})
@@ -643,19 +643,19 @@ func TestTelegram_ConcurrentConfirmAndCheck(t *testing.T) {
 				case <-updatesDone:
 					// last check with both updates processed, so the request is confirmed unless already used
 					if _, _, e := tb.CheckToken(token, "user"); e == nil {
-						atomic.AddInt32(&successes, 1)
+						successes.Add(1)
 					}
 					return
 				default:
 					if _, _, e := tb.CheckToken(token, "user"); e == nil {
-						atomic.AddInt32(&successes, 1)
+						successes.Add(1)
 					}
 				}
 			}
 		})
 		wg.Wait()
 
-		require.Equal(t, int32(1), atomic.LoadInt32(&successes), "confirmed request is used once and never restored after that")
+		require.Equal(t, int32(1), successes.Load(), "confirmed request is used once and never restored after that")
 	}
 }
 
@@ -832,7 +832,7 @@ func TestTelegram_APIErrorWithheldWhenEscapingIsMalformed(t *testing.T) {
 	assert.Contains(t, err.Error(), "text withheld", "an undecodable description was released")
 
 	text := err.Error()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		assert.NotContains(t, text, token, "the token is recoverable after %d decoding passes", i)
 		next, decErr := neturl.QueryUnescape(text)
 		if decErr != nil || next == text {

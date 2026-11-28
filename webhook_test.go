@@ -173,13 +173,13 @@ func TestWebhook_SendLimitsErrorBody(t *testing.T) {
 }
 
 func TestWebhook_SendReusesConnection(t *testing.T) {
-	var newConns int32
+	var newConns atomic.Int32
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(strings.Repeat("b", 1024)))
 	}))
 	ts.Config.ConnState = func(_ net.Conn, state http.ConnState) {
 		if state == http.StateNew {
-			atomic.AddInt32(&newConns, 1)
+			newConns.Add(1)
 		}
 	}
 	ts.Start()
@@ -191,7 +191,7 @@ func TestWebhook_SendReusesConnection(t *testing.T) {
 	for range 3 {
 		require.NoError(t, wh.Send(context.Background(), ts.URL, "some_text"))
 	}
-	assert.Equal(t, int32(1), atomic.LoadInt32(&newConns), "response body is drained, so the connection is reused")
+	assert.Equal(t, int32(1), newConns.Load(), "response body is drained, so the connection is reused")
 }
 
 func TestWebhook_SendRedirects(t *testing.T) {
