@@ -1,7 +1,7 @@
 github.com/aymerick/douceur v0.2.0 h1:Mv+mAeH1Q+n9Fr+oyamOlAkUNPWPlA8PPGR0QAaYuPk=
 github.com/aymerick/douceur v0.2.0/go.mod h1:wlT5vV2O3h55X9m7iVYN0TBM0NH/MmbLnd30/FjWUq4=
-github.com/go-pkgz/email v0.8.0 h1:6+Tgjfj7zFccFCPmURV2spKDXDb7aX/iWXBY2hBa9ww=
-github.com/go-pkgz/email v0.8.0/go.mod h1:+wgi4x7S33IuCzfcCM5euN0GwQG6XvO/PBLxrNffYLI=
+github.com/go-pkgz/email v0.9.0 h1:mujEwC/3zVR+DQDZKv+mb7N1ip7xKC92cuKy/PnTmlo=
+github.com/go-pkgz/email v0.9.0/go.mod h1:+wgi4x7S33IuCzfcCM5euN0GwQG6XvO/PBLxrNffYLI=
 github.com/go-pkgz/lgr v0.14.0 h1:juHybvwdHh8/j9Bp6iWX9AxzMJV6591Wqzw8NgTYKWk=
 github.com/go-pkgz/lgr v0.14.0/go.mod h1:Lw6DkNRnCPyX07mqkiUK/p+eA1opq4GKkWfWia64RA8=
 github.com/go-pkgz/repeater/v2 v2.2.0 h1:8nZR/NaknmLfx2YMHbr78u9OL4Xj+8+romm9dz4FpMg=
