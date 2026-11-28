@@ -1066,6 +1066,42 @@ func TestTelegram_SupportedHTMLKeepsLines(t *testing.T) {
 
 // net/http sends a GET again by itself when a reused connection closes without an answer, so a message
 // sent with GET could arrive twice
+func TestTelegram_RequestMethod(t *testing.T) {
+	type seen struct{ method, contentType, body string }
+	got := make(chan seen, 1)
+	ts := mockTelegramServer(func(w http.ResponseWriter, r *http.Request) {
+		// getMe of NewTelegram is answered by mockTelegramServer and does not get here
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		got <- seen{method: r.Method, contentType: r.Header.Get("Content-Type"), body: string(body)}
+		_, _ = w.Write([]byte(`{"ok":true,"result":{}}`))
+	})
+	defer ts.Close()
+	tb, err := NewTelegram(TelegramParams{Token: "good-token", apiPrefix: ts.URL + "/"})
+	require.NoError(t, err)
+
+	tbl := []struct {
+		name, method string
+		body         []byte
+		want         seen
+	}{
+		{name: "get method without a body", method: "getUpdates?offset=1", want: seen{method: http.MethodGet}},
+		{name: "get method in another case", method: "GETME?x=1", want: seen{method: http.MethodGet}},
+		{name: "other method without a body", method: "sendMessage?chat_id=1&text=a", want: seen{method: http.MethodPost}},
+		{name: "method named like get", method: "ge?x=1", want: seen{method: http.MethodPost}},
+		{name: "get method with a body", method: "getChat", body: []byte(`{"chat_id":1}`),
+			want: seen{method: http.MethodPost, contentType: "application/json; charset=utf-8", body: `{"chat_id":1}`}},
+		{name: "other method with a body", method: "sendMessage", body: []byte(`{"text":"a"}`),
+			want: seen{method: http.MethodPost, contentType: "application/json; charset=utf-8", body: `{"text":"a"}`}},
+	}
+	for _, tt := range tbl {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, tb.Request(context.Background(), tt.method, tt.body, &struct{}{}))
+			assert.Equal(t, tt.want, <-got)
+		})
+	}
+}
+
 func TestTelegram_SendMessageNotRepeatedOnLostAnswer(t *testing.T) {
 	var sends atomic.Int32
 	ts := mockTelegramServer(func(w http.ResponseWriter, r *http.Request) {
@@ -1090,6 +1126,10 @@ func TestTelegram_SendMessageNotRepeatedOnLostAnswer(t *testing.T) {
 		// telegram takes method names in any case
 		"Request in lower case": func() error {
 			return tb.Request(context.Background(), "sendmessage?chat_id=1", []byte(`{"text":"text"}`), &struct{}{})
+		},
+		// without a body the parameters travel in the query, as sendText sent them before
+		"Request without a body": func() error {
+			return tb.Request(context.Background(), "sendMessage?chat_id=1&text=text", nil, &struct{}{})
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

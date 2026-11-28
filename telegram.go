@@ -546,6 +546,10 @@ var errTelegramRedirect = errors.New("refusing to follow a telegram api redirect
 
 // Request makes a request to the Telegram API and return the result.
 //
+// A non-nil b is sent as the JSON body of a POST. Without a body, a method that only reads, one whose
+// name starts with "get", is sent as GET and any other method as POST with an empty body, its
+// parameters in the query of method either way.
+//
 // Timeout applies to each attempt. A call is tried up to three times, 250ms apart, when the API answers
 // with 429 or the TCP connection to it can't be opened, as when it is refused or the name does not
 // resolve. A method that only reads, one whose name starts with "get" such as getMe and getUpdates, is
@@ -566,11 +570,16 @@ func (t *Telegram) Request(ctx context.Context, method string, b []byte, data an
 		retry = false
 		url := fmt.Sprintf("%s%s/%s", t.apiPrefix, t.Token, method)
 
+		// net/http itself sends a GET again when a reused connection closes before an answer, and a
+		// repeated sendMessage delivers the message twice, so only a read-only method goes as GET
 		var req *http.Request
 		var err error
-		if b == nil {
+		switch {
+		case b == nil && readOnly:
 			req, err = http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
-		} else {
+		case b == nil:
+			req, err = http.NewRequestWithContext(ctx, "POST", url, http.NoBody)
+		default:
 			req, err = http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 		}
 		if err != nil {
